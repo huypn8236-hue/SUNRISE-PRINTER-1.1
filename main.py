@@ -120,65 +120,69 @@ if is_android():
             return []
 
     def print_via_bluetooth_pyjnius(mac_addr, payload_bytes):
-        """
-        Gửi dữ liệu qua Bluetooth với chunk nhỏ để tránh mất dữ liệu
-        """
-        try:
-            UUID = autoclass('java.util.UUID')
-            BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-            adapter = BluetoothAdapter.getDefaultAdapter()
-            device = adapter.getRemoteDevice(mac_addr)
-            spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-            
-            sock = device.createRfcommSocketToServiceRecord(spp_uuid)
-            #sock.setSoTimeout(15000)  # 15 giây timeout
-            
-            if adapter.isDiscovering():
-                adapter.cancelDiscovery()
-            
-            # Thử kết nối với retry
-            max_retries = 3
-            connected = False
-            for attempt in range(max_retries):
-                try:
-                    print(f"Connect attempt {attempt+1}/{max_retries}...")
-                    sock.connect()
-                    connected = True
-                    break
-                except Exception as e:
-                    print(f"Connect attempt {attempt+1} failed: {e}")
-                    if attempt < max_retries - 1:
-                        time.sleep(1)
-                        sock = device.createRfcommSocketToServiceRecord(spp_uuid)
-                        sock.setSoTimeout(15000)
-            
-            if not connected:
-                return False, "Không thể kết nối sau 3 lần thử"
-            
-            out = sock.getOutputStream()
-            
-            # GỬI CHẬM, TỪNG CHUNK NHỎ
-            chunk_size = 256
-            total_sent = 0
-            
-            for i in range(0, len(payload_bytes), chunk_size):
-                chunk = payload_bytes[i:i+chunk_size]
-                out.write(chunk)
-                out.flush()
-                total_sent += len(chunk)
-                print(f"Sent {total_sent}/{len(payload_bytes)} bytes")
-                time.sleep(0.15)  # Chờ 150ms mỗi chunk
-            
-            # Chờ máy in xử lý
-            time.sleep(2)
-            
-            out.close()
-            sock.close()
-            return True, None
-            
-        except Exception as e:
-            print(f"Bluetooth print error: {e}")
-            return False, str(e)
+    """
+    Gửi dữ liệu qua Bluetooth với chunk nhỏ để tránh mất dữ liệu
+    """
+    try:
+        UUID = autoclass('java.util.UUID')
+        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+        adapter = BluetoothAdapter.getDefaultAdapter()
+        device = adapter.getRemoteDevice(mac_addr)
+        spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        
+        if adapter.isDiscovering():
+            adapter.cancelDiscovery()
+        
+        # Thử kết nối với retry
+        max_retries = 3
+        connected = False
+        sock = None
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"Connect attempt {attempt+1}/{max_retries}...")
+                sock = device.createRfcommSocketToServiceRecord(spp_uuid)
+                sock.connect()
+                connected = True
+                break
+            except Exception as e:
+                print(f"Connect attempt {attempt+1} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+                    # Đóng socket cũ nếu có
+                    if sock:
+                        try:
+                            sock.close()
+                        except:
+                            pass
+        
+        if not connected:
+            return False, "Không thể kết nối sau 3 lần thử"
+        
+        out = sock.getOutputStream()
+        
+        # GỬI CHẬM, TỪNG CHUNK NHỎ
+        chunk_size = 256
+        total_sent = 0
+        
+        for i in range(0, len(payload_bytes), chunk_size):
+            chunk = payload_bytes[i:i+chunk_size]
+            out.write(chunk)
+            out.flush()
+            total_sent += len(chunk)
+            print(f"Sent {total_sent}/{len(payload_bytes)} bytes")
+            time.sleep(0.15)  # Chờ 150ms mỗi chunk
+        
+        # Chờ máy in xử lý
+        time.sleep(2)
+        
+        out.close()
+        sock.close()
+        return True, None
+        
+    except Exception as e:
+        print(f"Bluetooth print error: {e}")
+        return False, str(e)
 
 # ---------- HÀM TÌM FONT TRÊN HỆ THỐNG ----------
 def find_system_font():
