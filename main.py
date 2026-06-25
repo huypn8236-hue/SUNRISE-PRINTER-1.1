@@ -291,34 +291,39 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     return img
 
-# ---------- TẠO LỆNH IN TEXT (KHÔNG RASTER, FORMAT GIỐNG PREVIEW) ----------
+# ---------- TẠO LỆNH IN TEXT (FORM NGANG + FONT TO GẤP 4) ----------
 def get_label_text_bytes(order_id, customer, box_index, box_total):
     """
-    Tạo lệnh ESC/POS dạng TEXT, format giống preview:
-    - Dòng 1: Mã đơn (đậm, double width)
-    - Dòng 2: Tên khách (normal)
-    - Dòng 3: Box (đậm, căn phải bằng khoảng trắng)
+    Tạo lệnh ESC/POS dạng TEXT:
+    - Form NGANG (xoay 90 độ)
+    - Font TO GẤP 4 (double width + height)
+    - Dòng 1: Mã đơn (đậm, to)
+    - Dòng 2: Tên khách (to)
+    - Dòng 3: Box (đậm, căn phải)
     """
     payload = b''
     payload += b'\x1b\x40'               # Reset
 
+    # === XOAY 90 ĐỘ (FORM NGANG) ===
+    payload += b'\x1b\x4c'               # ESC L - Xoay 90 độ
+    
+    # === FONT TO GẤP 4 ===
+    payload += b'\x1b\x21\x30'           # Double width + double height (gấp 4)
+
     # Căn giữa toàn bộ
     payload += b'\x1b\x61\x01'
 
-    # Dòng 1: Mã đơn (đậm + double width)
+    # Dòng 1: Mã đơn (đậm + to)
     payload += b'\x1b\x45\x01'           # Đậm ON
-    payload += b'\x1b\x21\x30'           # Double width + height
     payload += f"{order_id}\n".encode('utf-8')
-    payload += b'\x1b\x21\x00'           # Normal size
     payload += b'\x1b\x45\x00'           # Đậm OFF
 
-    # Dòng 2: Tên khách (normal)
+    # Dòng 2: Tên khách
     payload += f"{customer}\n".encode('utf-8')
 
     # Dòng 3: Box (đậm, căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
-    # Giả sử chiều rộng tối đa 32 ký tự
-    max_width = 32
+    max_width = 16  # Giảm xuống vì font to hơn
     padding_spaces = max_width - len(box_text)
     if padding_spaces > 0:
         payload += b' ' * padding_spaces
@@ -327,7 +332,7 @@ def get_label_text_bytes(order_id, customer, box_index, box_total):
     payload += b'\x1b\x45\x00'           # Đậm OFF
 
     # Xuống dòng và cắt giấy
-    payload += b'\n' * 3
+    payload += b'\n' * 2
     payload += b'\x1d\x56\x00'           # Cắt giấy
 
     return payload
@@ -662,7 +667,7 @@ class HomeScreen(Screen):
     def _print_bt_thread(self, oid, cust, box_n, mac, status_label, popup_root):
         try:
             for i in range(box_n):
-                # SỬ DỤNG IN TEXT (KHÔNG RASTER)
+                # SỬ DỤNG IN TEXT (KHÔNG RASTER) - FORM NGANG, FONT TO GẤP 4
                 payload = get_label_text_bytes(oid, cust, i+1, box_n)
                 ok, err = print_via_bluetooth_pyjnius(mac, payload)
                 if not ok:
