@@ -163,8 +163,8 @@ if is_android():
             
             out = sock.getOutputStream()
             
-            # GỬI CHẬM, TỪNG CHUNK NHỎ - GIẢM TẢI CHO MÁY IN
-            chunk_size = 128
+            # === TỐI ƯU CHO TEXT DÀI + FONT TO + XOAY ===
+            chunk_size = 64  # Giảm xuống 64 bytes
             total_sent = 0
             
             for i in range(0, len(payload_bytes), chunk_size):
@@ -173,10 +173,10 @@ if is_android():
                 out.flush()
                 total_sent += len(chunk)
                 print(f"Sent {total_sent}/{len(payload_bytes)} bytes")
-                time.sleep(0.25)  # Delay 250ms
+                time.sleep(0.4)  # Delay 400ms
             
-            # Chờ máy in xử lý
-            time.sleep(3)
+            # Chờ máy in xử lý LÂU HƠN
+            time.sleep(4)
             
             out.close()
             sock.close()
@@ -255,9 +255,9 @@ def create_label_image(order_id, customer, box_index, box_total,
     if font_path:
         try:
             # Font size cụ thể: 25, 16, 18
-            font_order = ImageFont.truetype(font_path, size=25)
-            font_name = ImageFont.truetype(font_path, size=16)
-            font_box = ImageFont.truetype(font_path, size=18)
+            font_order = ImageFont.truetype(font_path, size=65)
+            font_name = ImageFont.truetype(font_path, size=55)
+            font_box = ImageFont.truetype(font_path, size=57)
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -291,12 +291,12 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     return img
 
-# ---------- TẠO LỆNH IN TEXT (FORM NGANG + FONT TO GẤP 4) ----------
+# ---------- TẠO LỆNH IN TEXT (FORM NGANG + FONT GẤP 2) ----------
 def get_label_text_bytes(order_id, customer, box_index, box_total):
     """
     Tạo lệnh ESC/POS dạng TEXT:
     - Form NGANG (xoay 90 độ)
-    - Font TO GẤP 4 (double width + height)
+    - Font GẤP 2 (double width)
     - Dòng 1: Mã đơn (đậm, to)
     - Dòng 2: Tên khách (to)
     - Dòng 3: Box (đậm, căn phải)
@@ -307,8 +307,8 @@ def get_label_text_bytes(order_id, customer, box_index, box_total):
     # === XOAY 90 ĐỘ (FORM NGANG) ===
     payload += b'\x1b\x4c'               # ESC L - Xoay 90 độ
     
-    # === FONT TO GẤP 4 ===
-    payload += b'\x1b\x21\x30'           # Double width + double height (gấp 4)
+    # === FONT GẤP 2 (CHỈ DOUBLE WIDTH) ===
+    payload += b'\x1b\x21\x20'           # Double width (gấp 2)
 
     # Căn giữa toàn bộ
     payload += b'\x1b\x61\x01'
@@ -323,7 +323,7 @@ def get_label_text_bytes(order_id, customer, box_index, box_total):
 
     # Dòng 3: Box (đậm, căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
-    max_width = 16  # Giảm xuống vì font to hơn
+    max_width = 24
     padding_spaces = max_width - len(box_text)
     if padding_spaces > 0:
         payload += b' ' * padding_spaces
@@ -332,7 +332,7 @@ def get_label_text_bytes(order_id, customer, box_index, box_total):
     payload += b'\x1b\x45\x00'           # Đậm OFF
 
     # Xuống dòng và cắt giấy
-    payload += b'\n' * 2
+    payload += b'\n' * 3
     payload += b'\x1d\x56\x00'           # Cắt giấy
 
     return payload
@@ -667,7 +667,7 @@ class HomeScreen(Screen):
     def _print_bt_thread(self, oid, cust, box_n, mac, status_label, popup_root):
         try:
             for i in range(box_n):
-                # SỬ DỤNG IN TEXT (KHÔNG RASTER) - FORM NGANG, FONT TO GẤP 4
+                # SỬ DỤNG IN TEXT - FORM NGANG, FONT GẤP 2
                 payload = get_label_text_bytes(oid, cust, i+1, box_n)
                 ok, err = print_via_bluetooth_pyjnius(mac, payload)
                 if not ok:
