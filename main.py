@@ -127,10 +127,11 @@ if is_android():
             UUID = autoclass('java.util.UUID')
             BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
             adapter = BluetoothAdapter.getDefaultAdapter()
+            if adapter is None:
+                return False, "Bluetooth không khả dụng"
+                
             device = adapter.getRemoteDevice(mac_addr)
             spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-            
-            sock = device.createRfcommSocketToServiceRecord(spp_uuid)
             
             if adapter.isDiscovering():
                 adapter.cancelDiscovery()
@@ -138,18 +139,24 @@ if is_android():
             # Thử kết nối với retry
             max_retries = 3
             connected = False
+            sock = None
+            
             for attempt in range(max_retries):
                 try:
                     print(f"Connect attempt {attempt+1}/{max_retries}...")
+                    sock = device.createRfcommSocketToServiceRecord(spp_uuid)
                     sock.connect()
                     connected = True
                     break
                 except Exception as e:
                     print(f"Connect attempt {attempt+1} failed: {e}")
+                    if sock:
+                        try:
+                            sock.close()
+                        except:
+                            pass
                     if attempt < max_retries - 1:
                         time.sleep(1)
-                        sock = device.createRfcommSocketToServiceRecord(spp_uuid)
-                        sock.setSoTimeout(15000)
             
             if not connected:
                 return False, "Không thể kết nối sau 3 lần thử"
@@ -166,7 +173,7 @@ if is_android():
                 out.flush()
                 total_sent += len(chunk)
                 print(f"Sent {total_sent}/{len(payload_bytes)} bytes")
-                time.sleep(0.15)  # Chờ 150ms mỗi chunk
+                time.sleep(0.15)
             
             # Chờ máy in xử lý
             time.sleep(2)
