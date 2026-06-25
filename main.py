@@ -163,8 +163,8 @@ if is_android():
             
             out = sock.getOutputStream()
             
-            # GỬI CHẬM, TỪNG CHUNK NHỎ
-            chunk_size = 256
+            # GỬI CHẬM, TỪNG CHUNK NHỎ - GIẢM TẢI CHO MÁY IN
+            chunk_size = 128
             total_sent = 0
             
             for i in range(0, len(payload_bytes), chunk_size):
@@ -173,10 +173,10 @@ if is_android():
                 out.flush()
                 total_sent += len(chunk)
                 print(f"Sent {total_sent}/{len(payload_bytes)} bytes")
-                time.sleep(0.15)
+                time.sleep(0.25)  # Delay 250ms
             
             # Chờ máy in xử lý
-            time.sleep(2)
+            time.sleep(3)
             
             out.close()
             sock.close()
@@ -235,11 +235,11 @@ def find_system_font():
     
     return None
 
-# ---------- TẠO ẢNH NHÃN (NGANG, 120x75mm) ----------
+# ---------- TẠO ẢNH NHÃN (TỐI ƯU - GIẢM KÍCH THƯỚC) ----------
 def create_label_image(order_id, customer, box_index, box_total,
-                       width_mm=120, height_mm=75, dpi=203):
+                       width_mm=80, height_mm=50, dpi=152):
     """
-    Tạo ảnh nhãn ngang (120x75mm) với bố cục chuẩn
+    Tạo ảnh nhãn với kích thước nhỏ hơn để máy in xử lý kịp
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -247,7 +247,6 @@ def create_label_image(order_id, customer, box_index, box_total,
     width_px = int(width_mm / 25.4 * dpi)
     height_px = int(height_mm / 25.4 * dpi)
 
-    # Tạo ảnh trắng - QUAN TRỌNG: dùng mode '1' (đen trắng)
     img = Image.new('1', (width_px, height_px), 1)
     draw = ImageDraw.Draw(img)
 
@@ -255,9 +254,9 @@ def create_label_image(order_id, customer, box_index, box_total,
     
     if font_path:
         try:
-            font_order = ImageFont.truetype(font_path, size=int(height_px * 0.25))
-            font_name = ImageFont.truetype(font_path, size=int(height_px * 0.18))
-            font_box = ImageFont.truetype(font_path, size=int(height_px * 0.16))
+            font_order = ImageFont.truetype(font_path, size=int(height_px * 0.45))
+            font_name = ImageFont.truetype(font_path, size=int(height_px * 0.35))
+            font_box = ImageFont.truetype(font_path, size=int(height_px * 0.35))
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -273,15 +272,12 @@ def create_label_image(order_id, customer, box_index, box_total,
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
     
-    # Dòng 1: Mã đơn (màu đen = 0)
     y1 = padding_y + int(section_height * 0.1)
     draw.text((padding_x, y1), order_id, fill=0, font=font_order)
     
-    # Dòng 2: Tên khách
     y2 = padding_y + section_height + int(section_height * 0.1)
     draw.text((padding_x, y2), customer, fill=0, font=font_name)
     
-    # Dòng 3: Box (căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0,0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
@@ -294,24 +290,19 @@ def create_label_image(order_id, customer, box_index, box_total,
 def image_to_escpos_raster(img):
     """
     Chuyển ảnh PIL sang dữ liệu raster ESC/POS
-    Định dạng: GS v 0 m xL xH yL yH [dữ liệu]
     """
-    # Đảm bảo ảnh ở mode '1' (đen trắng)
     if img.mode != '1':
         img = img.convert('1')
     
     width, height = img.size
     
-    # Tạo dữ liệu raster
     raster_data = bytearray()
     pixels = img.load()
     
-    # Duyệt từng pixel theo hàng
     for y in range(height):
         byte = 0
         bit = 7
         for x in range(width):
-            # Pixel đen = 0, pixel trắng = 1
             if pixels[x, y] == 0:
                 byte |= (1 << bit)
             bit -= 1
@@ -322,7 +313,6 @@ def image_to_escpos_raster(img):
         if bit != 7:
             raster_data.append(byte)
     
-    # Tạo lệnh ESC/POS
     xL = width & 0xFF
     xH = (width >> 8) & 0xFF
     yL = height & 0xFF
@@ -336,19 +326,15 @@ def get_label_bytes(order_id, customer, box_index, box_total):
     """
     Tạo full lệnh ESC/POS để in label
     """
-    # Tạo ảnh
     img = create_label_image(order_id, customer, box_index, box_total)
-    
-    # Chuyển sang raster
     raster_cmd = image_to_escpos_raster(img)
     
-    # Tạo full payload với lệnh ESC/POS
     payload = b''
     payload += b'\x1b\x40'              # Reset máy in
     payload += b'\x1b\x61\x01'          # Căn giữa
     payload += raster_cmd               # Dữ liệu ảnh
-    payload += b'\n' * 3                # Xuống dòng
-    payload += b'\x1d\x56\x42\x00'      # Cắt giấy (GS V 42)
+    payload += b'\n' * 5                # Xuống dòng
+    payload += b'\x1d\x56\x00'          # Cắt giấy
     
     return payload
 
@@ -454,7 +440,7 @@ class HomeScreen(Screen):
         content = BoxLayout(orientation='vertical', size_hint_y=None, padding=dp(12), spacing=dp(8))
         content.bind(minimum_height=content.setter('height'))
 
-        # Ô nhập liệu
+        # Ô nhập liệu (GIỮ NGUYÊN)
         self.so_input = TextInput(hint_text="SO Num", font_size=sp(18), multiline=False,
                                   size_hint_y=None, height=dp(44),
                                   background_color=(0.95,0.95,0.95,1),
@@ -516,11 +502,11 @@ class HomeScreen(Screen):
         scroll.add_widget(content)
         main_layout.add_widget(scroll)
 
-        # Thanh điều hướng dưới đáy (4 tab)
+        # Thanh điều hướng dưới đáy - ĐỔI "Nhập liệu" thành "Test Print"
         nav_bottom = BoxLayout(size_hint_y=None, height=dp(48), spacing=0)
-        tabs = ["Nhập liệu", "Lịch sử", "Máy in", "Cài đặt"]
+        tabs = ["Test Print", "Lịch sử", "Máy in", "Cài đặt"]
         screen_map = {
-            "Nhập liệu": "home",
+            "Test Print": "home",
             "Lịch sử": "history",
             "Máy in": "printer_manager",
             "Cài đặt": "settings"
@@ -548,9 +534,58 @@ class HomeScreen(Screen):
 
     def switch_tab(self, screen_name):
         if screen_name == "home":
+            # Khi bấm Test Print, thực hiện in test
+            self.test_print()
             return
         else:
             self.manager.current = screen_name
+
+    def test_print(self, *args):
+        """Test in text đơn giản để kiểm tra máy in"""
+        if not is_android():
+            Popup(title="Thông báo", content=Label(text="Chỉ hoạt động trên Android"),
+                  size_hint=(.8,.4)).open()
+            return
+        
+        devices = find_paired_printers_pyjnius()
+        if not devices:
+            Popup(title="Lỗi", content=Label(text="Không tìm thấy máy in Bluetooth"),
+                  size_hint=(.8,.4)).open()
+            return
+        
+        mac = devices[0][1]
+        
+        # Dữ liệu test đơn giản - KHÔNG DÙNG ẢNH
+        test_data = b''
+        test_data += b'\x1b\x40'              # Reset máy in
+        test_data += b'\x1b\x61\x01'          # Căn giữa
+        test_data += b'=== TEST PRINT ===\n'
+        test_data += b'Order: TEST123\n'
+        test_data += b'Customer: Test User\n'
+        test_data += b'Box: #1/1\n'
+        test_data += b'\n\n\n'
+        test_data += b'\x1d\x56\x00'          # Cắt giấy
+        
+        # Popup đang xử lý
+        popup_content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
+        status_label = Label(text="Đang in test...", font_size=sp(16))
+        popup_content.add_widget(status_label)
+        popup = Popup(title="Test Print", content=popup_content, size_hint=(.8,.4))
+        popup.open()
+        
+        def do_test(dt):
+            ok, err = print_via_bluetooth_pyjnius(mac, test_data)
+            popup.dismiss()
+            if ok:
+                Popup(title="✅ Thành công", 
+                      content=Label(text="Test in thành công!\nMáy in hoạt động tốt."),
+                      size_hint=(.8,.4)).open()
+            else:
+                Popup(title="❌ Lỗi", 
+                      content=Label(text=f"Test in thất bại:\n{err}"),
+                      size_hint=(.8,.4)).open()
+        
+        Clock.schedule_once(do_test, 0.5)
 
     def on_print(self, *args):
         oid = self.so_input.text.strip()
@@ -685,7 +720,6 @@ class HomeScreen(Screen):
             self.current_page = 0
         img = self.label_images[self.current_page]
         
-        # Chuyển sang RGB để hiển thị
         if img.mode != 'RGB':
             img_rgb = img.convert('RGB')
         else:
