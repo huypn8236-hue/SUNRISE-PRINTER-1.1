@@ -235,11 +235,11 @@ def find_system_font():
     
     return None
 
-# ---------- TẠO ẢNH NHÃN (TỐI ƯU - GIẢM KÍCH THƯỚC) ----------
+# ---------- TẠO ẢNH PREVIEW (GIỮ NGUYÊN 120x75, FONT SIZE CỤ THỂ) ----------
 def create_label_image(order_id, customer, box_index, box_total,
-                       width_mm=80, height_mm=50, dpi=152):
+                       width_mm=120, height_mm=75, dpi=203):
     """
-    Tạo ảnh nhãn với kích thước nhỏ hơn để máy in xử lý kịp
+    Tạo ảnh preview với kích thước 120x75mm, font size: 25 (order), 16 (customer), 18 (box)
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -247,16 +247,17 @@ def create_label_image(order_id, customer, box_index, box_total,
     width_px = int(width_mm / 25.4 * dpi)
     height_px = int(height_mm / 25.4 * dpi)
 
-    img = Image.new('1', (width_px, height_px), 1)
+    img = Image.new('RGB', (width_px, height_px), 'white')
     draw = ImageDraw.Draw(img)
 
     font_path = find_system_font()
     
     if font_path:
         try:
-            font_order = ImageFont.truetype(font_path, size=int(height_px * 0.45))
-            font_name = ImageFont.truetype(font_path, size=int(height_px * 0.35))
-            font_box = ImageFont.truetype(font_path, size=int(height_px * 0.35))
+            # Font size cụ thể: 25, 16, 18
+            font_order = ImageFont.truetype(font_path, size=25)
+            font_name = ImageFont.truetype(font_path, size=16)
+            font_box = ImageFont.truetype(font_path, size=18)
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -266,76 +267,69 @@ def create_label_image(order_id, customer, box_index, box_total,
         font_name = ImageFont.load_default()
         font_box = ImageFont.load_default()
 
-    padding_x = int(width_px * 0.04)
-    padding_y = int(height_px * 0.04)
-    
+    padding_x = int(width_px * 0.05)
+    padding_y = int(height_px * 0.05)
+
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
-    
-    y1 = padding_y + int(section_height * 0.1)
-    draw.text((padding_x, y1), order_id, fill=0, font=font_order)
-    
-    y2 = padding_y + section_height + int(section_height * 0.1)
-    draw.text((padding_x, y2), customer, fill=0, font=font_name)
-    
+
+    # Dòng 1: Mã đơn (trên cùng, căn trái)
+    y1 = padding_y + section_height * 0.2
+    draw.text((padding_x, y1), order_id, fill='black', font=font_order)
+
+    # Dòng 2: Tên khách (giữa, căn trái)
+    y2 = padding_y + section_height + section_height * 0.2
+    draw.text((padding_x, y2), customer, fill='black', font=font_name)
+
+    # Dòng 3: Box (dưới cùng, căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0,0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
     x_pos = width_px - text_width - padding_x
-    y3 = padding_y + section_height * 2 + int(section_height * 0.1)
-    draw.text((x_pos, y3), box_text, fill=0, font=font_box)
+    y3 = padding_y + section_height * 2 + section_height * 0.2
+    draw.text((x_pos, y3), box_text, fill='black', font=font_box)
 
     return img
 
-def image_to_escpos_raster(img):
+# ---------- TẠO LỆNH IN TEXT (KHÔNG RASTER, FORMAT GIỐNG PREVIEW) ----------
+def get_label_text_bytes(order_id, customer, box_index, box_total):
     """
-    Chuyển ảnh PIL sang dữ liệu raster ESC/POS
+    Tạo lệnh ESC/POS dạng TEXT, format giống preview:
+    - Dòng 1: Mã đơn (đậm, double width)
+    - Dòng 2: Tên khách (normal)
+    - Dòng 3: Box (đậm, căn phải bằng khoảng trắng)
     """
-    if img.mode != '1':
-        img = img.convert('1')
-    
-    width, height = img.size
-    
-    raster_data = bytearray()
-    pixels = img.load()
-    
-    for y in range(height):
-        byte = 0
-        bit = 7
-        for x in range(width):
-            if pixels[x, y] == 0:
-                byte |= (1 << bit)
-            bit -= 1
-            if bit < 0:
-                raster_data.append(byte)
-                byte = 0
-                bit = 7
-        if bit != 7:
-            raster_data.append(byte)
-    
-    xL = width & 0xFF
-    xH = (width >> 8) & 0xFF
-    yL = height & 0xFF
-    yH = (height >> 8) & 0xFF
-    
-    cmd = bytes([0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH]) + bytes(raster_data)
-    
-    return cmd
-
-def get_label_bytes(order_id, customer, box_index, box_total):
-    """
-    Tạo full lệnh ESC/POS để in label
-    """
-    img = create_label_image(order_id, customer, box_index, box_total)
-    raster_cmd = image_to_escpos_raster(img)
-    
     payload = b''
-    payload += b'\x1b\x40'              # Reset máy in
-    payload += b'\x1b\x61\x01'          # Căn giữa
-    payload += raster_cmd               # Dữ liệu ảnh
-    payload += b'\n' * 5                # Xuống dòng
-    payload += b'\x1d\x56\x00'          # Cắt giấy
-    
+    payload += b'\x1b\x40'               # Reset
+
+    # Căn giữa toàn bộ
+    payload += b'\x1b\x61\x01'
+
+    # Dòng 1: Mã đơn (đậm + double width)
+    payload += b'\x1b\x45\x01'           # Đậm ON
+    payload += b'\x1b\x21\x30'           # Double width + height
+    payload += f"{order_id}\n".encode('utf-8')
+    payload += b'\x1b\x21\x00'           # Normal size
+    payload += b'\x1b\x45\x00'           # Đậm OFF
+
+    # Dòng 2: Tên khách (normal)
+    payload += f"{customer}\n".encode('utf-8')
+
+    # Dòng 3: Box (đậm, căn phải)
+    box_text = f"Box: #{box_index} / {box_total}"
+    # Giả sử chiều rộng tối đa 32 ký tự
+    max_width = 32
+    padding_spaces = max_width - len(box_text)
+    if padding_spaces > 0:
+        payload += b' ' * padding_spaces
+    payload += b'\x1b\x45\x01'           # Đậm ON
+    payload += f"{box_text}\n".encode('utf-8')
+    payload += b'\x1b\x45\x00'           # Đậm OFF
+
+    # Xuống dòng và cắt giấy
+    payload += b'\n' * 3
+    payload += b'\x1d\x56\x00'           # Cắt giấy
+
     return payload
 
 # ---------- MÀN HÌNH PHỤ ----------
@@ -440,7 +434,7 @@ class HomeScreen(Screen):
         content = BoxLayout(orientation='vertical', size_hint_y=None, padding=dp(12), spacing=dp(8))
         content.bind(minimum_height=content.setter('height'))
 
-        # Ô nhập liệu (GIỮ NGUYÊN)
+        # Ô nhập liệu
         self.so_input = TextInput(hint_text="SO Num", font_size=sp(18), multiline=False,
                                   size_hint_y=None, height=dp(44),
                                   background_color=(0.95,0.95,0.95,1),
@@ -465,6 +459,13 @@ class HomeScreen(Screen):
                            background_color=COLOR_SUCCESS, color=COLOR_WHITE)
         btn_print.bind(on_release=self.on_print)
         content.add_widget(btn_print)
+
+        # Nút TEST IN
+        btn_test = Button(text="TEST IN", font_size=sp(16), bold=True,
+                          size_hint_y=None, height=dp(40),
+                          background_color=COLOR_WARNING, color=COLOR_WHITE)
+        btn_test.bind(on_release=self.test_print)
+        content.add_widget(btn_test)
 
         # Khu vực Preview
         preview_box = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(500), spacing=dp(4))
@@ -502,11 +503,11 @@ class HomeScreen(Screen):
         scroll.add_widget(content)
         main_layout.add_widget(scroll)
 
-        # Thanh điều hướng dưới đáy - ĐỔI "Nhập liệu" thành "Test Print"
+        # Thanh điều hướng dưới đáy
         nav_bottom = BoxLayout(size_hint_y=None, height=dp(48), spacing=0)
-        tabs = ["Test Print", "Lịch sử", "Máy in", "Cài đặt"]
+        tabs = ["Nhập liệu", "Lịch sử", "Máy in", "Cài đặt"]
         screen_map = {
-            "Test Print": "home",
+            "Nhập liệu": "home",
             "Lịch sử": "history",
             "Máy in": "printer_manager",
             "Cài đặt": "settings"
@@ -534,8 +535,6 @@ class HomeScreen(Screen):
 
     def switch_tab(self, screen_name):
         if screen_name == "home":
-            # Khi bấm Test Print, thực hiện in test
-            self.test_print()
             return
         else:
             self.manager.current = screen_name
@@ -555,9 +554,9 @@ class HomeScreen(Screen):
         
         mac = devices[0][1]
         
-        # Dữ liệu test đơn giản - KHÔNG DÙNG ẢNH
+        # Dữ liệu test đơn giản
         test_data = b''
-        test_data += b'\x1b\x40'              # Reset máy in
+        test_data += b'\x1b\x40'              # Reset
         test_data += b'\x1b\x61\x01'          # Căn giữa
         test_data += b'=== TEST PRINT ===\n'
         test_data += b'Order: TEST123\n'
@@ -566,7 +565,6 @@ class HomeScreen(Screen):
         test_data += b'\n\n\n'
         test_data += b'\x1d\x56\x00'          # Cắt giấy
         
-        # Popup đang xử lý
         popup_content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
         status_label = Label(text="Đang in test...", font_size=sp(16))
         popup_content.add_widget(status_label)
@@ -664,7 +662,8 @@ class HomeScreen(Screen):
     def _print_bt_thread(self, oid, cust, box_n, mac, status_label, popup_root):
         try:
             for i in range(box_n):
-                payload = get_label_bytes(oid, cust, i+1, box_n)
+                # SỬ DỤNG IN TEXT (KHÔNG RASTER)
+                payload = get_label_text_bytes(oid, cust, i+1, box_n)
                 ok, err = print_via_bluetooth_pyjnius(mac, payload)
                 if not ok:
                     status_label.text = f"Lỗi: {err}"
