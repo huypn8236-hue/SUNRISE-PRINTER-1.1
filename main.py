@@ -235,11 +235,12 @@ def find_system_font():
     
     return None
 
-# ---------- TẠO ẢNH PREVIEW (GIỮ NGUYÊN 120x75, FONT SIZE CỤ THỂ) ----------
+# ---------- TẠO ẢNH PREVIEW (100x70mm, FONT SIZE TO) ----------
 def create_label_image(order_id, customer, box_index, box_total,
-                       width_mm=120, height_mm=75, dpi=203):
+                       width_mm=100, height_mm=70, dpi=203):
     """
-    Tạo ảnh preview với kích thước 120x75mm, font size: 25 (order), 16 (customer), 18 (box)
+    Tạo ảnh preview với kích thước 100x70mm
+    font size: 65 (order), 55 (customer), 57 (box)
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -254,7 +255,6 @@ def create_label_image(order_id, customer, box_index, box_total,
     
     if font_path:
         try:
-            # Font size cụ thể: 25, 16, 18
             font_order = ImageFont.truetype(font_path, size=65)
             font_name = ImageFont.truetype(font_path, size=55)
             font_box = ImageFont.truetype(font_path, size=57)
@@ -273,15 +273,12 @@ def create_label_image(order_id, customer, box_index, box_total,
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
-    # Dòng 1: Mã đơn (trên cùng, căn trái)
     y1 = padding_y + section_height * 0.2
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
-    # Dòng 2: Tên khách (giữa, căn trái)
     y2 = padding_y + section_height + section_height * 0.2
     draw.text((padding_x, y2), customer, fill='black', font=font_name)
 
-    # Dòng 3: Box (dưới cùng, căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0,0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
@@ -297,9 +294,6 @@ def get_label_text_bytes(order_id, customer, box_index, box_total):
     Tạo lệnh ESC/POS dạng TEXT:
     - Form NGANG (xoay 90 độ)
     - Font GẤP 2 (double width)
-    - Dòng 1: Mã đơn (đậm, to)
-    - Dòng 2: Tên khách (to)
-    - Dòng 3: Box (đậm, căn phải)
     """
     payload = b''
     payload += b'\x1b\x40'               # Reset
@@ -472,6 +466,13 @@ class HomeScreen(Screen):
         btn_test.bind(on_release=self.test_print)
         content.add_widget(btn_test)
 
+        # Nút TEST PAGE NGANG
+        btn_test_page = Button(text="TEST PAGE NGANG", font_size=sp(14), bold=True,
+                               size_hint_y=None, height=dp(40),
+                               background_color=(0.4, 0.8, 1, 1), color=COLOR_WHITE)
+        btn_test_page.bind(on_release=self.test_page_landscape)
+        content.add_widget(btn_test_page)
+
         # Khu vực Preview
         preview_box = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(500), spacing=dp(4))
         preview_label = Label(text="Preview tem", font_size=sp(16), color=COLOR_GRAY,
@@ -586,6 +587,76 @@ class HomeScreen(Screen):
             else:
                 Popup(title="❌ Lỗi", 
                       content=Label(text=f"Test in thất bại:\n{err}"),
+                      size_hint=(.8,.4)).open()
+        
+        Clock.schedule_once(do_test, 0.5)
+
+    def test_page_landscape(self, *args):
+        """Test in PAGE NGANG với format giống tem thật (xoay + font gấp đôi)"""
+        if not is_android():
+            Popup(title="Thông báo", content=Label(text="Chỉ hoạt động trên Android"),
+                  size_hint=(.8,.4)).open()
+            return
+        
+        devices = find_paired_printers_pyjnius()
+        if not devices:
+            Popup(title="Lỗi", content=Label(text="Không tìm thấy máy in Bluetooth"),
+                  size_hint=(.8,.4)).open()
+            return
+        
+        mac = devices[0][1]
+        
+        # === DỮ LIỆU TEST VỚI ĐÚNG FORMAT TEM (XOAY + FONT GẤP ĐÔI) ===
+        test_data = b''
+        test_data += b'\x1b\x40'               # Reset
+        
+        # Xoay 90 độ
+        test_data += b'\x1b\x4c'
+        
+        # Font gấp đôi
+        test_data += b'\x1b\x21\x20'
+        
+        # Căn giữa
+        test_data += b'\x1b\x61\x01'
+        
+        # Dòng 1: Mã đơn (đậm)
+        test_data += b'\x1b\x45\x01'
+        test_data += b"SO12345\n".encode('utf-8')
+        test_data += b'\x1b\x45\x00'
+        
+        # Dòng 2: Tên khách
+        test_data += b"TEST CUSTOMER\n".encode('utf-8')
+        
+        # Dòng 3: Box (căn phải)
+        box_text = "Box: #1 / 1"
+        max_width = 24
+        padding_spaces = max_width - len(box_text)
+        if padding_spaces > 0:
+            test_data += b' ' * padding_spaces
+        test_data += b'\x1b\x45\x01'
+        test_data += f"{box_text}\n".encode('utf-8')
+        test_data += b'\x1b\x45\x00'
+        
+        # Xuống dòng và cắt giấy
+        test_data += b'\n' * 3
+        test_data += b'\x1d\x56\x00'
+        
+        popup_content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
+        status_label = Label(text="Đang in PAGE NGANG...", font_size=sp(16))
+        popup_content.add_widget(status_label)
+        popup = Popup(title="Test Page Ngang", content=popup_content, size_hint=(.8,.4))
+        popup.open()
+        
+        def do_test(dt):
+            ok, err = print_via_bluetooth_pyjnius(mac, test_data)
+            popup.dismiss()
+            if ok:
+                Popup(title="✅ Thành công", 
+                      content=Label(text="Test PAGE NGANG thành công!\nFormat xoay + font gấp đôi hoạt động."),
+                      size_hint=(.8,.4)).open()
+            else:
+                Popup(title="❌ Lỗi", 
+                      content=Label(text=f"Test PAGE NGANG thất bại:\n{err}\n→ Lỗi nằm ở format xoay/font!"),
                       size_hint=(.8,.4)).open()
         
         Clock.schedule_once(do_test, 0.5)
