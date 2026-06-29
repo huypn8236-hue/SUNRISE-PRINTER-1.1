@@ -163,8 +163,8 @@ if is_android():
             
             out = sock.getOutputStream()
             
-            # === TỐI ƯU CHO TEXT DÀI + FONT TO + XOAY ===
-            chunk_size = 64  # Giảm xuống 64 bytes
+            # Gửi dữ liệu TSPL (nhẹ hơn ESC/POS)
+            chunk_size = 128
             total_sent = 0
             
             for i in range(0, len(payload_bytes), chunk_size):
@@ -173,10 +173,9 @@ if is_android():
                 out.flush()
                 total_sent += len(chunk)
                 print(f"Sent {total_sent}/{len(payload_bytes)} bytes")
-                time.sleep(0.4)  # Delay 400ms
+                time.sleep(0.15)
             
-            # Chờ máy in xử lý LÂU HƠN
-            time.sleep(4)
+            time.sleep(2)
             
             out.close()
             sock.close()
@@ -235,11 +234,11 @@ def find_system_font():
     
     return None
 
-# ---------- TẠO ẢNH PREVIEW (100x70mm, FONT SIZE TO) ----------
+# ---------- TẠO ẢNH PREVIEW (110x70mm) ----------
 def create_label_image(order_id, customer, box_index, box_total,
-                       width_mm=100, height_mm=70, dpi=203):
+                       width_mm=110, height_mm=70, dpi=203):
     """
-    Tạo ảnh preview với kích thước 100x70mm
+    Tạo ảnh preview với kích thước 110x70mm
     font size: 65 (order), 55 (customer), 57 (box)
     """
     if not HAS_PIL:
@@ -273,12 +272,15 @@ def create_label_image(order_id, customer, box_index, box_total,
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
+    # Dòng 1: Mã đơn (trên cùng)
     y1 = padding_y + section_height * 0.2
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
+    # Dòng 2: Tên khách (giữa)
     y2 = padding_y + section_height + section_height * 0.2
     draw.text((padding_x, y2), customer, fill='black', font=font_name)
 
+    # Dòng 3: Box (dưới cùng, căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0,0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
@@ -288,48 +290,50 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     return img
 
-# ---------- TẠO LỆNH IN TEXT (FORM NGANG + FONT GẤP 2) ----------
-def get_label_text_bytes(order_id, customer, box_index, box_total):
+# ---------- TẠO LỆNH IN TSPL (FORM NGANG, CHỮ TO) ----------
+def get_label_tspl_bytes(order_id, customer, box_index, box_total):
     """
-    Tạo lệnh ESC/POS dạng TEXT:
-    - Form NGANG (xoay 90 độ)
-    - Font GẤP 2 (double width)
+    Tạo lệnh TSPL cho máy in tem:
+    - Kích thước: 110mm x 70mm
+    - Hướng in: Ngang (xoay 90°)
+    - Bố cục 3 dòng phân bổ đều, chữ to
     """
-    payload = b''
-    payload += b'\x1b\x40'               # Reset
-
-    # === XOAY 90 ĐỘ (FORM NGANG) ===
-    payload += b'\x1b\x4c'               # ESC L - Xoay 90 độ
+    # TSPL sử dụng đơn vị dots (1mm = 8 dots với 203 DPI)
+    width_dots = 110 * 8   # 880 dots
+    height_dots = 70 * 8   # 560 dots
     
-    # === FONT GẤP 2 (CHỈ DOUBLE WIDTH) ===
-    payload += b'\x1b\x21\x20'           # Double width (gấp 2)
-
-    # Căn giữa toàn bộ
-    payload += b'\x1b\x61\x01'
-
-    # Dòng 1: Mã đơn (đậm + to)
-    payload += b'\x1b\x45\x01'           # Đậm ON
-    payload += f"{order_id}\n".encode('utf-8')
-    payload += b'\x1b\x45\x00'           # Đậm OFF
-
+    # Tọa độ các dòng (tính từ trên xuống, đơn vị dots)
+    # Vì tem ngang, ta bố trí theo chiều dọc nhưng in xoay
+    y1 = 60   # Dòng 1: Mã đơn
+    y2 = 240  # Dòng 2: Tên khách
+    y3 = 420  # Dòng 3: Box
+    
+    # Kích thước chữ (x-multiplication, y-multiplication)
+    font_size_order = 5  # To nhất
+    font_size_name = 4
+    font_size_box = 4
+    
+    # Tạo lệnh TSPL
+    cmd = ""
+    cmd += "SIZE 110 mm, 70 mm\n"        # Kích thước tem
+    cmd += "GAP 0,0\n"                   # Không có khe hở
+    cmd += "DIRECTION 1\n"               # Hướng in: 0 = dọc, 1 = ngang (xoay 90°)
+    cmd += "REFERENCE 0,0\n"             # Điểm gốc
+    cmd += "CLS\n"                       # Xóa buffer
+    
+    # Dòng 1: Mã đơn (to nhất)
+    cmd += f'TEXT {20},{y1},"1",0,{font_size_order},{font_size_order},"{order_id}"\n'
+    
     # Dòng 2: Tên khách
-    payload += f"{customer}\n".encode('utf-8')
-
-    # Dòng 3: Box (đậm, căn phải)
+    cmd += f'TEXT {20},{y2},"1",0,{font_size_name},{font_size_name},"{customer}"\n'
+    
+    # Dòng 3: Box (căn phải bằng cách tính toán vị trí x)
     box_text = f"Box: #{box_index} / {box_total}"
-    max_width = 24
-    padding_spaces = max_width - len(box_text)
-    if padding_spaces > 0:
-        payload += b' ' * padding_spaces
-    payload += b'\x1b\x45\x01'           # Đậm ON
-    payload += f"{box_text}\n".encode('utf-8')
-    payload += b'\x1b\x45\x00'           # Đậm OFF
-
-    # Xuống dòng và cắt giấy
-    payload += b'\n' * 3
-    payload += b'\x1d\x56\x00'           # Cắt giấy
-
-    return payload
+    cmd += f'TEXT {20},{y3},"1",0,{font_size_box},{font_size_box},"{box_text}"\n'
+    
+    cmd += "PRINT 1\n"                   # In 1 bản
+    
+    return cmd.encode('utf-8')
 
 # ---------- MÀN HÌNH PHỤ ----------
 class SettingsScreen(Screen):
@@ -466,13 +470,6 @@ class HomeScreen(Screen):
         btn_test.bind(on_release=self.test_print)
         content.add_widget(btn_test)
 
-        # Nút TEST PAGE NGANG
-        btn_test_page = Button(text="TEST PAGE NGANG", font_size=sp(14), bold=True,
-                               size_hint_y=None, height=dp(40),
-                               background_color=(0.4, 0.8, 1, 1), color=COLOR_WHITE)
-        btn_test_page.bind(on_release=self.test_page_landscape)
-        content.add_widget(btn_test_page)
-
         # Khu vực Preview
         preview_box = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(500), spacing=dp(4))
         preview_label = Label(text="Preview tem", font_size=sp(16), color=COLOR_GRAY,
@@ -560,16 +557,16 @@ class HomeScreen(Screen):
         
         mac = devices[0][1]
         
-        # Dữ liệu test đơn giản
+        # Dữ liệu test TSPL đơn giản
         test_data = b''
-        test_data += b'\x1b\x40'              # Reset
-        test_data += b'\x1b\x61\x01'          # Căn giữa
-        test_data += b'=== TEST PRINT ===\n'
-        test_data += b'Order: TEST123\n'
-        test_data += b'Customer: Test User\n'
-        test_data += b'Box: #1/1\n'
-        test_data += b'\n\n\n'
-        test_data += b'\x1d\x56\x00'          # Cắt giấy
+        test_data += b'SIZE 60 mm, 30 mm\n'
+        test_data += b'GAP 0,0\n'
+        test_data += b'DIRECTION 0\n'
+        test_data += b'REFERENCE 0,0\n'
+        test_data += b'CLS\n'
+        test_data += b'TEXT 10,10,"1",0,3,3,"TEST PRINT"\n'
+        test_data += b'TEXT 10,50,"1",0,2,2,"Order: TEST123"\n'
+        test_data += b'PRINT 1\n'
         
         popup_content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
         status_label = Label(text="Đang in test...", font_size=sp(16))
@@ -587,76 +584,6 @@ class HomeScreen(Screen):
             else:
                 Popup(title="❌ Lỗi", 
                       content=Label(text=f"Test in thất bại:\n{err}"),
-                      size_hint=(.8,.4)).open()
-        
-        Clock.schedule_once(do_test, 0.5)
-
-    def test_page_landscape(self, *args):
-        """Test in PAGE NGANG với format giống tem thật (xoay + font gấp đôi)"""
-        if not is_android():
-            Popup(title="Thông báo", content=Label(text="Chỉ hoạt động trên Android"),
-                  size_hint=(.8,.4)).open()
-            return
-        
-        devices = find_paired_printers_pyjnius()
-        if not devices:
-            Popup(title="Lỗi", content=Label(text="Không tìm thấy máy in Bluetooth"),
-                  size_hint=(.8,.4)).open()
-            return
-        
-        mac = devices[0][1]
-        
-        # === DỮ LIỆU TEST VỚI ĐÚNG FORMAT TEM (XOAY + FONT GẤP ĐÔI) ===
-        test_data = b''
-        test_data += b'\x1b\x40'               # Reset
-        
-        # Xoay 90 độ
-        test_data += b'\x1b\x4c'
-        
-        # Font gấp đôi
-        test_data += b'\x1b\x21\x20'
-        
-        # Căn giữa
-        test_data += b'\x1b\x61\x01'
-        
-        # Dòng 1: Mã đơn (đậm)
-        test_data += b'\x1b\x45\x01'
-        test_data += b"SO12345\n".encode('utf-8')
-        test_data += b'\x1b\x45\x00'
-        
-        # Dòng 2: Tên khách
-        test_data += b"TEST CUSTOMER\n".encode('utf-8')
-        
-        # Dòng 3: Box (căn phải)
-        box_text = "Box: #1 / 1"
-        max_width = 24
-        padding_spaces = max_width - len(box_text)
-        if padding_spaces > 0:
-            test_data += b' ' * padding_spaces
-        test_data += b'\x1b\x45\x01'
-        test_data += f"{box_text}\n".encode('utf-8')
-        test_data += b'\x1b\x45\x00'
-        
-        # Xuống dòng và cắt giấy
-        test_data += b'\n' * 3
-        test_data += b'\x1d\x56\x00'
-        
-        popup_content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
-        status_label = Label(text="Đang in PAGE NGANG...", font_size=sp(16))
-        popup_content.add_widget(status_label)
-        popup = Popup(title="Test Page Ngang", content=popup_content, size_hint=(.8,.4))
-        popup.open()
-        
-        def do_test(dt):
-            ok, err = print_via_bluetooth_pyjnius(mac, test_data)
-            popup.dismiss()
-            if ok:
-                Popup(title="✅ Thành công", 
-                      content=Label(text="Test PAGE NGANG thành công!\nFormat xoay + font gấp đôi hoạt động."),
-                      size_hint=(.8,.4)).open()
-            else:
-                Popup(title="❌ Lỗi", 
-                      content=Label(text=f"Test PAGE NGANG thất bại:\n{err}\n→ Lỗi nằm ở format xoay/font!"),
                       size_hint=(.8,.4)).open()
         
         Clock.schedule_once(do_test, 0.5)
@@ -738,8 +665,8 @@ class HomeScreen(Screen):
     def _print_bt_thread(self, oid, cust, box_n, mac, status_label, popup_root):
         try:
             for i in range(box_n):
-                # SỬ DỤNG IN TEXT - FORM NGANG, FONT GẤP 2
-                payload = get_label_text_bytes(oid, cust, i+1, box_n)
+                # SỬ DỤNG IN TSPL - FORM NGANG, CHỮ TO
+                payload = get_label_tspl_bytes(oid, cust, i+1, box_n)
                 ok, err = print_via_bluetooth_pyjnius(mac, payload)
                 if not ok:
                     status_label.text = f"Lỗi: {err}"
