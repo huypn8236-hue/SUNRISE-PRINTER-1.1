@@ -163,7 +163,7 @@ if is_android():
             
             out = sock.getOutputStream()
             
-            # Gửi dữ liệu TSPL (nhẹ hơn ESC/POS)
+            # Gửi dữ liệu TSPL2
             chunk_size = 128
             total_sent = 0
             
@@ -234,12 +234,12 @@ def find_system_font():
     
     return None
 
-# ---------- TẠO ẢNH PREVIEW (110x70mm) ----------
+# ---------- TẠO ẢNH PREVIEW (120x75mm) ----------
 def create_label_image(order_id, customer, box_index, box_total,
-                       width_mm=110, height_mm=70, dpi=203):
+                       width_mm=120, height_mm=75, dpi=203):
     """
-    Tạo ảnh preview với kích thước 110x70mm
-    font size: 65 (order), 55 (customer), 57 (box)
+    Tạo ảnh preview với kích thước 120x75mm
+    font size: 70 (order), 58 (customer), 60 (box)
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -254,9 +254,9 @@ def create_label_image(order_id, customer, box_index, box_total,
     
     if font_path:
         try:
-            font_order = ImageFont.truetype(font_path, size=65)
-            font_name = ImageFont.truetype(font_path, size=55)
-            font_box = ImageFont.truetype(font_path, size=57)
+            font_order = ImageFont.truetype(font_path, size=70)
+            font_name = ImageFont.truetype(font_path, size=58)
+            font_box = ImageFont.truetype(font_path, size=60)
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -272,12 +272,12 @@ def create_label_image(order_id, customer, box_index, box_total,
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
-    # Dòng 1: Mã đơn (trên cùng)
-    y1 = padding_y + section_height * 0.2
+    # Dòng 1: Mã đơn (trên cùng, căn trái)
+    y1 = padding_y + section_height * 0.1
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
-    # Dòng 2: Tên khách (giữa)
-    y2 = padding_y + section_height + section_height * 0.2
+    # Dòng 2: Tên khách (giữa, căn trái)
+    y2 = padding_y + section_height + section_height * 0.1
     draw.text((padding_x, y2), customer, fill='black', font=font_name)
 
     # Dòng 3: Box (dưới cùng, căn phải)
@@ -285,51 +285,131 @@ def create_label_image(order_id, customer, box_index, box_total,
     bbox = draw.textbbox((0,0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
     x_pos = width_px - text_width - padding_x
-    y3 = padding_y + section_height * 2 + section_height * 0.2
+    y3 = padding_y + section_height * 2 + section_height * 0.1
     draw.text((x_pos, y3), box_text, fill='black', font=font_box)
 
     return img
 
-# ---------- TẠO LỆNH IN TSPL (FORM NGANG, CHỮ TO) ----------
+# ---------- TẠO ẢNH RASTER CHO TSPL2 BITMAP ----------
+def create_raster_for_tspl(order_id, customer, box_index, box_total,
+                           width_mm=120, height_mm=75, dpi=203):
+    """
+    Tạo ảnh raster cho TSPL2 BITMAP:
+    - Xoay 90° để form ngang
+    - Chuyển sang mode '1' (đen trắng)
+    - DPI 203
+    """
+    if not HAS_PIL:
+        raise ImportError("Pillow chưa được cài đặt.")
+
+    width_px = int(width_mm / 25.4 * dpi)
+    height_px = int(height_mm / 25.4 * dpi)
+
+    img = Image.new('RGB', (width_px, height_px), 'white')
+    draw = ImageDraw.Draw(img)
+
+    font_path = find_system_font()
+    
+    if font_path:
+        try:
+            font_order = ImageFont.truetype(font_path, size=70)
+            font_name = ImageFont.truetype(font_path, size=58)
+            font_box = ImageFont.truetype(font_path, size=60)
+        except:
+            font_order = ImageFont.load_default()
+            font_name = ImageFont.load_default()
+            font_box = ImageFont.load_default()
+    else:
+        font_order = ImageFont.load_default()
+        font_name = ImageFont.load_default()
+        font_box = ImageFont.load_default()
+
+    padding_x = int(width_px * 0.05)
+    padding_y = int(height_px * 0.05)
+
+    usable_height = height_px - padding_y * 2
+    section_height = usable_height / 3
+
+    y1 = padding_y + section_height * 0.1
+    draw.text((padding_x, y1), order_id, fill='black', font=font_order)
+
+    y2 = padding_y + section_height + section_height * 0.1
+    draw.text((padding_x, y2), customer, fill='black', font=font_name)
+
+    box_text = f"Box: #{box_index} / {box_total}"
+    bbox = draw.textbbox((0,0), box_text, font=font_box)
+    text_width = bbox[2] - bbox[0]
+    x_pos = width_px - text_width - padding_x
+    y3 = padding_y + section_height * 2 + section_height * 0.1
+    draw.text((x_pos, y3), box_text, fill='black', font=font_box)
+
+    # === XOAY 90 ĐỘ ===
+    img_rotated = img.rotate(90, expand=True)
+    
+    # === CHUYỂN SANG ẢNH ĐEN TRẮNG ===
+    img_bw = img_rotated.convert('1')
+    
+    return img_bw
+
+# ---------- CHUYỂN ẢNH PIL SANG DỮ LIỆU BITMAP CHO TSPL2 ----------
+def pil_to_tspl_bitmap(img):
+    """
+    Chuyển ảnh PIL (mode '1') sang dữ liệu bitmap cho lệnh BITMAP của TSPL2
+    Trả về: (width_bytes, height_dots, hex_data)
+    """
+    if img.mode != '1':
+        img = img.convert('1')
+    
+    width, height = img.size
+    
+    # Tính width theo byte (mỗi byte = 8 pixels)
+    width_bytes = (width + 7) // 8
+    
+    # Tạo dữ liệu bitmap
+    bitmap_data = []
+    pixels = img.load()
+    
+    for y in range(height):
+        byte = 0
+        bit = 7
+        for x in range(width):
+            if pixels[x, y] == 0:  # Pixel đen
+                byte |= (1 << bit)
+            bit -= 1
+            if bit < 0:
+                bitmap_data.append(byte)
+                byte = 0
+                bit = 7
+        if bit != 7:
+            bitmap_data.append(byte)
+    
+    # Chuyển sang hex string
+    hex_data = ''.join(f'{b:02X}' for b in bitmap_data)
+    
+    return width_bytes, height, hex_data
+
+# ---------- TẠO LỆNH IN TSPL2 BITMAP ----------
 def get_label_tspl_bytes(order_id, customer, box_index, box_total):
     """
-    Tạo lệnh TSPL cho máy in tem:
-    - Kích thước: 110mm x 70mm
-    - Hướng in: Ngang (xoay 90°)
-    - Bố cục 3 dòng phân bổ đều, chữ to
+    Tạo lệnh TSPL2 với BITMAP (Raster) để in form ngang 120x75mm
     """
-    # TSPL sử dụng đơn vị dots (1mm = 8 dots với 203 DPI)
-    width_dots = 110 * 8   # 880 dots
-    height_dots = 70 * 8   # 560 dots
+    # Tạo ảnh đã xoay
+    img = create_raster_for_tspl(order_id, customer, box_index, box_total,
+                                  width_mm=120, height_mm=75, dpi=203)
     
-    # Tọa độ các dòng (tính từ trên xuống, đơn vị dots)
-    # Vì tem ngang, ta bố trí theo chiều dọc nhưng in xoay
-    y1 = 60   # Dòng 1: Mã đơn
-    y2 = 240  # Dòng 2: Tên khách
-    y3 = 420  # Dòng 3: Box
+    # Chuyển sang dữ liệu bitmap
+    width_bytes, height_dots, bitmap_data = pil_to_tspl_bitmap(img)
     
-    # Kích thước chữ (x-multiplication, y-multiplication)
-    font_size_order = 5  # To nhất
-    font_size_name = 4
-    font_size_box = 4
-    
-    # Tạo lệnh TSPL
+    # Tạo lệnh TSPL2
     cmd = ""
-    cmd += "SIZE 110 mm, 70 mm\n"        # Kích thước tem
+    cmd += "SIZE 120 mm, 75 mm\n"        # Kích thước tem
     cmd += "GAP 0,0\n"                   # Không có khe hở
-    cmd += "DIRECTION 1\n"               # Hướng in: 0 = dọc, 1 = ngang (xoay 90°)
+    cmd += "DIRECTION 0\n"               # Hướng in: 0 = dọc (ảnh đã xoay sẵn)
     cmd += "REFERENCE 0,0\n"             # Điểm gốc
     cmd += "CLS\n"                       # Xóa buffer
     
-    # Dòng 1: Mã đơn (to nhất)
-    cmd += f'TEXT {20},{y1},"1",0,{font_size_order},{font_size_order},"{order_id}"\n'
-    
-    # Dòng 2: Tên khách
-    cmd += f'TEXT {20},{y2},"1",0,{font_size_name},{font_size_name},"{customer}"\n'
-    
-    # Dòng 3: Box (căn phải bằng cách tính toán vị trí x)
-    box_text = f"Box: #{box_index} / {box_total}"
-    cmd += f'TEXT {20},{y3},"1",0,{font_size_box},{font_size_box},"{box_text}"\n'
+    # Lệnh BITMAP: BITMAP x,y,width_bytes,height_dots,mode,data
+    cmd += f"BITMAP 0,0,{width_bytes},{height_dots},1,{bitmap_data}\n"
     
     cmd += "PRINT 1\n"                   # In 1 bản
     
@@ -543,7 +623,7 @@ class HomeScreen(Screen):
             self.manager.current = screen_name
 
     def test_print(self, *args):
-        """Test in text đơn giản để kiểm tra máy in"""
+        """Test in TSPL2 đơn giản để kiểm tra máy in"""
         if not is_android():
             Popup(title="Thông báo", content=Label(text="Chỉ hoạt động trên Android"),
                   size_hint=(.8,.4)).open()
@@ -557,7 +637,7 @@ class HomeScreen(Screen):
         
         mac = devices[0][1]
         
-        # Dữ liệu test TSPL đơn giản
+        # Dữ liệu test TSPL2 đơn giản
         test_data = b''
         test_data += b'SIZE 60 mm, 30 mm\n'
         test_data += b'GAP 0,0\n'
@@ -665,7 +745,7 @@ class HomeScreen(Screen):
     def _print_bt_thread(self, oid, cust, box_n, mac, status_label, popup_root):
         try:
             for i in range(box_n):
-                # SỬ DỤNG IN TSPL - FORM NGANG, CHỮ TO
+                # SỬ DỤNG IN TSPL2 BITMAP (RASTER)
                 payload = get_label_tspl_bytes(oid, cust, i+1, box_n)
                 ok, err = print_via_bluetooth_pyjnius(mac, payload)
                 if not ok:
