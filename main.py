@@ -2,7 +2,6 @@ import os
 import json
 import time
 import traceback
-import zlib
 from datetime import datetime
 
 from kivy.app import App
@@ -232,9 +231,13 @@ def find_system_font():
 
     return None
 
-# ---------- TẠO ẢNH PREVIEW (120x75, DPI 203) ----------
+# ---------- TẠO ẢNH PREVIEW (110x70mm) ----------
 def create_label_image(order_id, customer, box_index, box_total,
-                       width_mm=120, height_mm=75, dpi=203):
+                       width_mm=110, height_mm=70, dpi=203):
+    """
+    Tạo ảnh preview với kích thước 110x70mm
+    font size: 65 (order), 50 (customer), 52 (box)
+    """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
 
@@ -248,9 +251,9 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     if font_path:
         try:
-            font_order = ImageFont.truetype(font_path, size=70)
-            font_name = ImageFont.truetype(font_path, size=58)
-            font_box = ImageFont.truetype(font_path, size=60)
+            font_order = ImageFont.truetype(font_path, size=65)
+            font_name = ImageFont.truetype(font_path, size=50)
+            font_box = ImageFont.truetype(font_path, size=52)
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -266,12 +269,15 @@ def create_label_image(order_id, customer, box_index, box_total,
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
+    # Dòng 1: Mã đơn (trên cùng, căn trái)
     y1 = padding_y + section_height * 0.1
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
+    # Dòng 2: Tên khách (giữa, căn trái)
     y2 = padding_y + section_height + section_height * 0.1
     draw.text((padding_x, y2), customer, fill='black', font=font_name)
 
+    # Dòng 3: Box (dưới cùng, căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0, 0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
@@ -281,9 +287,14 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     return img
 
-# ---------- TẠO ẢNH RASTER CHO ZPL2 (DPI 150, XOAY NGANG) ----------
+# ---------- TẠO ẢNH RASTER CHO ZPL2 ----------
 def create_zpl_raster(order_id, customer, box_index, box_total,
-                      width_mm=120, height_mm=75, dpi=150):
+                      width_mm=110, height_mm=70, dpi=150):
+    """
+    Tạo ảnh raster cho ZPL2:
+    - Xoay 90° để form ngang
+    - Chuyển sang mode '1' (đen trắng)
+    """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
 
@@ -298,9 +309,9 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
     if font_path:
         try:
             # Font to hơn để bù DPI thấp
-            font_order = ImageFont.truetype(font_path, size=95)
-            font_name = ImageFont.truetype(font_path, size=78)
-            font_box = ImageFont.truetype(font_path, size=81)
+            font_order = ImageFont.truetype(font_path, size=85)
+            font_name = ImageFont.truetype(font_path, size=68)
+            font_box = ImageFont.truetype(font_path, size=70)
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -337,10 +348,10 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
 
     return img_bw
 
-def pil_to_zpl_gf(img):
+def pil_to_zpl_gf_raw(img):
     """
-    Chuyển ảnh PIL mode '1' thành dữ liệu cho lệnh ^GF của ZPL2
-    Trả về: (width_bytes, height_dots, total_bytes, compressed_hex_data)
+    Chuyển ảnh PIL mode '1' thành dữ liệu hex cho lệnh ^GFA
+    KHÔNG NÉN - máy in dễ hiểu hơn
     """
     if img.mode != '1':
         img = img.convert('1')
@@ -349,7 +360,7 @@ def pil_to_zpl_gf(img):
     width_bytes = (width + 7) // 8
 
     pixels = img.load()
-    raster_data = bytearray()
+    hex_list = []
 
     for y in range(height):
         byte = 0
@@ -359,29 +370,28 @@ def pil_to_zpl_gf(img):
                 byte |= (1 << bit)
             bit -= 1
             if bit < 0:
-                raster_data.append(byte)
+                hex_list.append(f'{byte:02X}')
                 byte = 0
                 bit = 7
         if bit != 7:
-            raster_data.append(byte)
+            hex_list.append(f'{byte:02X}')
 
-    total_bytes = len(raster_data)
-    # Nén dữ liệu bằng zlib
-    compressed = zlib.compress(bytes(raster_data), 9)
-    hex_data = compressed.hex().upper()
+    hex_data = ''.join(hex_list)
+    total_bytes = len(hex_data) // 2
 
     return width_bytes, height, total_bytes, hex_data
 
 def get_label_zpl_bytes(order_id, customer, box_index, box_total):
     """
-    Tạo lệnh ZPL2 để in ảnh raster form ngang 120x75mm (DPI 150)
+    Tạo lệnh ZPL2 để in ảnh raster form ngang 110x70mm (DPI 150)
+    Sử dụng ^GFA (không nén) để máy in dễ xử lý
     """
     # 1. Tạo ảnh đã xoay
     img = create_zpl_raster(order_id, customer, box_index, box_total,
-                            width_mm=120, height_mm=75, dpi=150)
+                            width_mm=110, height_mm=70, dpi=150)
 
-    # 2. Chuyển sang dữ liệu ^GF
-    width_bytes, height_dots, total_bytes, hex_data = pil_to_zpl_gf(img)
+    # 2. Chuyển sang dữ liệu hex
+    width_bytes, height_dots, total_bytes, hex_data = pil_to_zpl_gf_raw(img)
 
     # 3. Tạo lệnh ZPL
     cmd = ""
@@ -389,7 +399,7 @@ def get_label_zpl_bytes(order_id, customer, box_index, box_total):
     cmd += f"^PW{width_bytes*8}\n"      # Chiều rộng label (dots)
     cmd += f"^LL{height_dots}\n"        # Chiều dài label (dots)
     cmd += "^FO0,0\n"                   # Đặt vị trí ảnh tại (0,0)
-    cmd += f"^GFB,{total_bytes},{width_bytes},{height_dots},Z,{hex_data}\n"
+    cmd += f"^GFA,{total_bytes},{total_bytes},{width_bytes},{hex_data}\n"
     cmd += "^FS\n"                       # Kết thúc field
     cmd += "^PQ1\n"                      # In 1 bản
     cmd += "^XZ\n"                       # Kết thúc label
