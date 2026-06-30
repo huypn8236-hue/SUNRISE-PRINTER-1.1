@@ -162,7 +162,8 @@ if is_android():
 
             out = sock.getOutputStream()
 
-            chunk_size = 128
+            # Tăng chunk_size để gửi nhanh hơn
+            chunk_size = 512
             total_sent = 0
 
             for i in range(0, len(payload_bytes), chunk_size):
@@ -171,9 +172,9 @@ if is_android():
                 out.flush()
                 total_sent += len(chunk)
                 print(f"Sent {total_sent}/{len(payload_bytes)} bytes")
-                time.sleep(0.15)
+                time.sleep(0.05)
 
-            time.sleep(2)
+            time.sleep(1)
 
             out.close()
             sock.close()
@@ -269,15 +270,12 @@ def create_label_image(order_id, customer, box_index, box_total,
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
-    # Dòng 1: Mã đơn (trên cùng, căn trái)
     y1 = padding_y + section_height * 0.1
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
-    # Dòng 2: Tên khách (giữa, căn trái)
     y2 = padding_y + section_height + section_height * 0.1
     draw.text((padding_x, y2), customer, fill='black', font=font_name)
 
-    # Dòng 3: Box (dưới cùng, căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0, 0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
@@ -287,15 +285,16 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     return img
 
-# ---------- TẠO ẢNH RASTER CHO ZPL2 (DPI 50, 115x70mm) ----------
+# ---------- TẠO ẢNH RASTER CHO ZPL2 (DPI 203) ----------
 def create_zpl_raster(order_id, customer, box_index, box_total,
-                      width_mm=115, height_mm=70, dpi=50):
+                      width_mm=115, height_mm=70, dpi=203):
     """
     Tạo ảnh raster cho ZPL2:
-    - DPI 50 (tăng tốc tối đa)
+    - DPI 203
     - Kích thước 115x70mm
     - Font cố định: 95-70-72
     - Dòng 1+2: Căn trái, Dòng 3: Căn phải
+    - KHÔNG XOAY ẢNH (để ZPL xoay)
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -310,7 +309,6 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
 
     if font_path:
         try:
-            # Font cố định (giữ nguyên size to)
             font_order = ImageFont.truetype(font_path, size=95)
             font_name = ImageFont.truetype(font_path, size=70)
             font_box = ImageFont.truetype(font_path, size=72)
@@ -323,38 +321,32 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
         font_name = ImageFont.load_default()
         font_box = ImageFont.load_default()
 
-    padding_x = int(width_px * 0.02)
-    padding_y = int(height_px * 0.02)
+    padding_x = int(width_px * 0.03)
+    padding_y = int(height_px * 0.03)
 
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
-    # === DÒNG 1 + 2: CĂN TRÁI ===
-    y1 = padding_y + section_height * 0.02
+    # Dòng 1 + 2: Căn trái
+    y1 = padding_y + section_height * 0.05
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
-    y2 = padding_y + section_height + section_height * 0.02
+    y2 = padding_y + section_height + section_height * 0.05
     draw.text((padding_x, y2), customer, fill='black', font=font_name)
 
-    # === DÒNG 3: CĂN PHẢI ===
+    # Dòng 3: Căn phải
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0, 0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
     x_pos = width_px - text_width - padding_x
-    y3 = padding_y + section_height * 2 + section_height * 0.02
+    y3 = padding_y + section_height * 2 + section_height * 0.05
     draw.text((x_pos, y3), box_text, fill='black', font=font_box)
 
-    # XOAY 90 ĐỘ (form ngang)
-    img_rotated = img.rotate(90, expand=True)
-    img_bw = img_rotated.convert('1')
-
+    # KHÔNG XOAY ẢNH
+    img_bw = img.convert('1')
     return img_bw
 
 def pil_to_zpl_gf_raw(img):
-    """
-    Chuyển ảnh PIL mode '1' thành dữ liệu hex cho lệnh ^GFA
-    KHÔNG NÉN - máy in dễ hiểu hơn
-    """
     if img.mode != '1':
         img = img.convert('1')
 
@@ -368,7 +360,7 @@ def pil_to_zpl_gf_raw(img):
         byte = 0
         bit = 7
         for x in range(width):
-            if pixels[x, y] == 0:  # pixel đen
+            if pixels[x, y] == 0:
                 byte |= (1 << bit)
             bit -= 1
             if bit < 0:
@@ -383,28 +375,99 @@ def pil_to_zpl_gf_raw(img):
 
     return width_bytes, height, total_bytes, hex_data
 
+def pil_to_hex(img):
+    if img.mode != '1':
+        img = img.convert('1')
+    
+    width, height = img.size
+    pixels = img.load()
+    hex_list = []
+    
+    for y in range(height):
+        byte = 0
+        bit = 7
+        for x in range(width):
+            if pixels[x, y] == 0:
+                byte |= (1 << bit)
+            bit -= 1
+            if bit < 0:
+                hex_list.append(f'{byte:02X}')
+                byte = 0
+                bit = 7
+        if bit != 7:
+            hex_list.append(f'{byte:02X}')
+    
+    return ''.join(hex_list)
+
+def pil_to_zpl_gf_chunked(img, max_bytes_per_chunk=30*1024):
+    """
+    Chia ảnh thành nhiều chunk nhỏ, mỗi chunk < 30KB
+    """
+    if img.mode != '1':
+        img = img.convert('1')
+    
+    width, height = img.size
+    width_bytes = (width + 7) // 8
+    
+    bytes_per_row = width_bytes
+    max_rows_per_chunk = max_bytes_per_chunk // bytes_per_row
+    if max_rows_per_chunk < 1:
+        max_rows_per_chunk = 1
+    
+    chunks = []
+    pixels = img.load()
+    
+    for start_y in range(0, height, max_rows_per_chunk):
+        end_y = min(start_y + max_rows_per_chunk, height)
+        chunk_height = end_y - start_y
+        
+        chunk_img = Image.new('1', (width, chunk_height), 1)
+        chunk_pixels = chunk_img.load()
+        
+        for y in range(chunk_height):
+            for x in range(width):
+                chunk_pixels[x, y] = pixels[x, start_y + y]
+        
+        hex_data = pil_to_hex(chunk_img)
+        total_bytes = len(hex_data) // 2
+        
+        chunks.append({
+            'width_bytes': width_bytes,
+            'height': chunk_height,
+            'total_bytes': total_bytes,
+            'hex_data': hex_data,
+            'start_y': start_y
+        })
+    
+    return chunks
+
 def get_label_zpl_bytes(order_id, customer, box_index, box_total):
     """
-    Tạo lệnh ZPL2 để in ảnh raster form ngang 115x70mm (DPI 50)
-    Sử dụng ^GFA (không nén) để máy in dễ xử lý
+    Tạo lệnh ZPL2 với ảnh được chia nhỏ thành 3 chunk
+    Dùng ^FWR để xoay label form ngang
     """
-    # 1. Tạo ảnh đã xoay
     img = create_zpl_raster(order_id, customer, box_index, box_total,
-                            width_mm=115, height_mm=70, dpi=50)
+                            width_mm=115, height_mm=70, dpi=203)
 
-    # 2. Chuyển sang dữ liệu hex
-    width_bytes, height_dots, total_bytes, hex_data = pil_to_zpl_gf_raw(img)
+    chunks = pil_to_zpl_gf_chunked(img, max_bytes_per_chunk=30*1024)
 
-    # 3. Tạo lệnh ZPL
+    # Kích thước gốc (dọc)
+    width_dots = img.size[0]
+    height_dots = img.size[1]
+
     cmd = ""
-    cmd += "^XA\n"                       # Bắt đầu label
-    cmd += f"^PW{width_bytes*8}\n"      # Chiều rộng label (dots)
-    cmd += f"^LL{height_dots}\n"        # Chiều dài label (dots)
-    cmd += "^FO0,0\n"                   # Đặt vị trí ảnh tại (0,0)
-    cmd += f"^GFA,{total_bytes},{total_bytes},{width_bytes},{hex_data}\n"
-    cmd += "^FS\n"                       # Kết thúc field
-    cmd += "^PQ1\n"                      # In 1 bản
-    cmd += "^XZ\n"                       # Kết thúc label
+    cmd += "^XA\n"
+    cmd += "^FWR\n"                       # Xoay label 90° (form ngang)
+    cmd += f"^PW{height_dots}\n"          # Chiều rộng = height_dots
+    cmd += f"^LL{width_dots}\n"           # Chiều dài = width_dots
+    
+    for chunk in chunks:
+        cmd += f"^FO0,{chunk['start_y']}\n"
+        cmd += f"^GFA,{chunk['total_bytes']},{chunk['total_bytes']},{chunk['width_bytes']},{chunk['hex_data']}\n"
+        cmd += "^FS\n"
+    
+    cmd += "^PQ1\n"
+    cmd += "^XZ\n"
 
     return cmd.encode('utf-8')
 
@@ -510,7 +573,6 @@ class HomeScreen(Screen):
         content = BoxLayout(orientation='vertical', size_hint_y=None, padding=dp(12), spacing=dp(8))
         content.bind(minimum_height=content.setter('height'))
 
-        # Ô nhập liệu
         self.so_input = TextInput(hint_text="SO Num", font_size=sp(18), multiline=False,
                                   size_hint_y=None, height=dp(44),
                                   background_color=(0.95,0.95,0.95,1),
@@ -529,21 +591,18 @@ class HomeScreen(Screen):
                                    foreground_color=COLOR_BLACK, padding=[dp(10), dp(6)])
         content.add_widget(self.box_input)
 
-        # Nút IN TEM
         btn_print = Button(text="IN TEM", font_size=sp(20), bold=True,
                            size_hint_y=None, height=dp(50),
                            background_color=COLOR_SUCCESS, color=COLOR_WHITE)
         btn_print.bind(on_release=self.on_print)
         content.add_widget(btn_print)
 
-        # Nút TEST IN
         btn_test = Button(text="TEST IN", font_size=sp(16), bold=True,
                           size_hint_y=None, height=dp(40),
                           background_color=COLOR_WARNING, color=COLOR_WHITE)
         btn_test.bind(on_release=self.test_print)
         content.add_widget(btn_test)
 
-        # Khu vực Preview
         preview_box = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(500), spacing=dp(4))
         preview_label = Label(text="Preview tem", font_size=sp(16), color=COLOR_GRAY,
                               size_hint_y=None, height=dp(24))
@@ -612,7 +671,6 @@ class HomeScreen(Screen):
             self.manager.current = screen_name
 
     def test_print(self, *args):
-        """Test in ZPL2 đơn giản"""
         if not is_android():
             Popup(title="Thông báo", content=Label(text="Chỉ hoạt động trên Android"),
                   size_hint=(.8,.4)).open()
@@ -626,7 +684,6 @@ class HomeScreen(Screen):
 
         mac = devices[0][1]
 
-        # Lệnh ZPL đơn giản
         test_data = b'^XA\n^FO50,50^ADN,36,20^FDTest Print^FS\n^XZ\n'
 
         popup_content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
@@ -731,7 +788,7 @@ class HomeScreen(Screen):
                     status_label.text = f"Lỗi: {err}"
                     status_label.color = COLOR_ERROR
                     return
-                time.sleep(1)
+                time.sleep(0.5)
             add_history_entry(oid, cust, box_n)
             status_label.text = f"In thành công {box_n} nhãn"
             status_label.color = COLOR_SUCCESS
@@ -768,7 +825,6 @@ class HomeScreen(Screen):
         Popup(title="Mô phỏng", content=Label(text=f"Đã lưu {box_n} ảnh tại {folder}"),
               size_hint=(.8,.4)).open()
 
-    # ---------- Preview ----------
     def update_preview(self):
         if not self.label_images:
             self.preview_image.texture = None
