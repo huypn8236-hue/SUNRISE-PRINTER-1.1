@@ -120,9 +120,6 @@ if is_android():
             return []
 
     def print_via_bluetooth_pyjnius(mac_addr, payload_bytes):
-        """
-        Gửi dữ liệu qua Bluetooth với chunk nhỏ để tránh mất dữ liệu
-        """
         try:
             UUID = autoclass('java.util.UUID')
             BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
@@ -234,10 +231,6 @@ def find_system_font():
 # ---------- TẠO ẢNH PREVIEW (115x72mm) ----------
 def create_label_image(order_id, customer, box_index, box_total,
                        width_mm=115, height_mm=72, dpi=203):
-    """
-    Tạo ảnh preview với kích thước 115x72mm
-    font size: 65 (order), 50 (customer), 52 (box)
-    """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
 
@@ -284,15 +277,14 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     return img
 
-# ---------- TẠO ẢNH RASTER CHO ZPL2 ----------
+# ---------- TẠO ẢNH RASTER CHO ZPL2 (DPI 50, SCALE 45-20-35) ----------
 def create_zpl_raster(order_id, customer, box_index, box_total,
-                      width_mm=115, height_mm=72, dpi=80):
+                      width_mm=115, height_mm=72, dpi=50):
     """
     Tạo ảnh raster cho ZPL2:
-    - Kích thước 115x72mm, DPI 80 (tăng tốc in)
-    - Xoay 90° để form ngang
-    - Chuyển sang mode '1' (đen trắng)
-    - Font x1.5 lần so với preview
+    - DPI 50 (tăng tốc in tối đa)
+    - Font scale theo DPI: 45% - 20% - 35%
+    - Bố cục rải đều 3 dòng, không đè nhau
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -307,10 +299,10 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
 
     if font_path:
         try:
-            # Font x1.5 lần so với preview (65*1.5=97, 50*1.5=75, 52*1.5=78)
-            font_order = ImageFont.truetype(font_path, size=97)
-            font_name = ImageFont.truetype(font_path, size=75)
-            font_box = ImageFont.truetype(font_path, size=78)
+            # === TỶ LỆ 45% - 20% - 35% ===
+            font_order = ImageFont.truetype(font_path, size=int(height_px * 0.45))  # 45%
+            font_name = ImageFont.truetype(font_path, size=int(height_px * 0.20))   # 20%
+            font_box = ImageFont.truetype(font_path, size=int(height_px * 0.35))    # 35%
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -320,9 +312,8 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
         font_name = ImageFont.load_default()
         font_box = ImageFont.load_default()
 
-    # Giảm padding để chữ rải đều khắp giấy
-    padding_x = int(width_px * 0.03)
-    padding_y = int(height_px * 0.03)
+    padding_x = int(width_px * 0.02)
+    padding_y = int(height_px * 0.02)
 
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
@@ -350,10 +341,6 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
     return img_bw
 
 def pil_to_zpl_gf_raw(img):
-    """
-    Chuyển ảnh PIL mode '1' thành dữ liệu hex cho lệnh ^GFA
-    KHÔNG NÉN - máy in dễ hiểu hơn
-    """
     if img.mode != '1':
         img = img.convert('1')
 
@@ -367,7 +354,7 @@ def pil_to_zpl_gf_raw(img):
         byte = 0
         bit = 7
         for x in range(width):
-            if pixels[x, y] == 0:  # pixel đen
+            if pixels[x, y] == 0:
                 byte |= (1 << bit)
             bit -= 1
             if bit < 0:
@@ -383,12 +370,8 @@ def pil_to_zpl_gf_raw(img):
     return width_bytes, height, total_bytes, hex_data
 
 def get_label_zpl_bytes(order_id, customer, box_index, box_total):
-    """
-    Tạo lệnh ZPL2 để in ảnh raster form ngang 115x72mm (DPI 80)
-    Sử dụng ^GFA (không nén) để máy in dễ xử lý
-    """
     img = create_zpl_raster(order_id, customer, box_index, box_total,
-                            width_mm=115, height_mm=72, dpi=80)
+                            width_mm=115, height_mm=72, dpi=50)
 
     width_bytes, height_dots, total_bytes, hex_data = pil_to_zpl_gf_raw(img)
 
