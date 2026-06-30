@@ -457,7 +457,7 @@ def get_label_zpl_bytes(order_id, customer, box_index, box_total):
 
     cmd = ""
     cmd += "^XA\n"
-    cmd += "^FWR\n"                       # Xoay label 90° (form ngang)
+    cmd += "^FWB\n"                       # Xoay label 90° (form ngang)
     cmd += f"^PW{height_dots}\n"          # Chiều rộng = height_dots
     cmd += f"^LL{width_dots}\n"           # Chiều dài = width_dots
     
