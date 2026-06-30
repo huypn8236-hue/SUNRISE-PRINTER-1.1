@@ -159,7 +159,7 @@ if is_android():
 
             out = sock.getOutputStream()
 
-            chunk_size = 128
+            chunk_size = 256
             total_sent = 0
 
             for i in range(0, len(payload_bytes), chunk_size):
@@ -168,9 +168,9 @@ if is_android():
                 out.flush()
                 total_sent += len(chunk)
                 print(f"Sent {total_sent}/{len(payload_bytes)} bytes")
-                time.sleep(0.15)
+                time.sleep(0.05)
 
-            time.sleep(2)
+            time.sleep(1)
 
             out.close()
             sock.close()
@@ -277,20 +277,18 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     return img
 
-# ---------- TẠO ẢNH RASTER CHO ZPL2 (DPI 50, SCALE 45-20-35) ----------
+# ---------- TẠO ẢNH RASTER CHO ZPL2 (CỐ ĐỊNH 1150x720) ----------
 def create_zpl_raster(order_id, customer, box_index, box_total,
-                      width_mm=115, height_mm=72, dpi=50):
+                      width_mm=115, height_mm=72, dpi=80):
     """
-    Tạo ảnh raster cho ZPL2:
-    - DPI 50 (tăng tốc in tối đa)
-    - Font scale theo DPI: 45% - 20% - 35%
-    - Bố cục rải đều 3 dòng, không đè nhau
+    Tạo ảnh raster với kích thước CỐ ĐỊNH 1150x720 pixels
+    Font scale theo chiều cao: 45% - 30% - 30%
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
 
-    width_px = int(width_mm / 25.4 * dpi)
-    height_px = int(height_mm / 25.4 * dpi)
+    width_px = 1150
+    height_px = 720
 
     img = Image.new('RGB', (width_px, height_px), 'white')
     draw = ImageDraw.Draw(img)
@@ -299,10 +297,9 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
 
     if font_path:
         try:
-            # === TỶ LỆ 45% - 20% - 35% ===
-            font_order = ImageFont.truetype(font_path, size=int(height_px * 0.45))  # 45%
-            font_name = ImageFont.truetype(font_path, size=int(height_px * 0.20))   # 20%
-            font_box = ImageFont.truetype(font_path, size=int(height_px * 0.35))    # 35%
+            font_order = ImageFont.truetype(font_path, size=int(height_px * 0.45))
+            font_name = ImageFont.truetype(font_path, size=int(height_px * 0.30))
+            font_box = ImageFont.truetype(font_path, size=int(height_px * 0.30))
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -312,13 +309,12 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
         font_name = ImageFont.load_default()
         font_box = ImageFont.load_default()
 
-    padding_x = int(width_px * 0.02)
-    padding_y = int(height_px * 0.02)
+    padding_x = int(width_px * 0.03)
+    padding_y = int(height_px * 0.03)
 
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
-    # === RẢI ĐỀU 3 DÒNG ===
     y1 = padding_y + section_height * 0.05
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
@@ -332,10 +328,7 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
     y3 = padding_y + section_height * 2 + section_height * 0.05
     draw.text((x_pos, y3), box_text, fill='black', font=font_box)
 
-    # XOAY 90 ĐỘ (form ngang)
     img_rotated = img.rotate(90, expand=True)
-
-    # CHUYỂN SANG ẢNH ĐEN TRẮNG (1-bit)
     img_bw = img_rotated.convert('1')
 
     return img_bw
@@ -369,22 +362,110 @@ def pil_to_zpl_gf_raw(img):
 
     return width_bytes, height, total_bytes, hex_data
 
+def pil_to_zpl_gf_chunked(img, max_bytes_per_chunk=30*1024):
+    """
+    Chia ảnh thành nhiều chunk nhỏ, mỗi chunk < max_bytes_per_chunk
+    Trả về: list các chunk với thông tin cần thiết
+    """
+    if img.mode != '1':
+        img = img.convert('1')
+    
+    width, height = img.size
+    width_bytes = (width + 7) // 8
+    
+    bytes_per_row = width_bytes
+    max_rows_per_chunk = max_bytes_per_chunk // bytes_per_row
+    if max_rows_per_chunk < 1:
+        max_rows_per_chunk = 1
+    
+    rows_per_chunk = max_rows_per_chunk
+    
+    chunks = []
+    pixels = img.load()
+    
+    for start_y in range(0, height, rows_per_chunk):
+        end_y = min(start_y + rows_per_chunk, height)
+        chunk_height = end_y - start_y
+        
+        chunk_img = Image.new('1', (width, chunk_height), 1)
+        chunk_pixels = chunk_img.load()
+        
+        for y in range(chunk_height):
+            for x in range(width):
+                chunk_pixels[x, y] = pixels[x, start_y + y]
+        
+        hex_data = pil_to_hex(chunk_img)
+        total_bytes = len(hex_data) // 2
+        
+        chunks.append({
+            'width_bytes': width_bytes,
+            'height': chunk_height,
+            'total_bytes': total_bytes,
+            'hex_data': hex_data,
+            'start_y': start_y
+        })
+    
+    return chunks
+
+def pil_to_hex(img):
+    if img.mode != '1':
+        img = img.convert('1')
+    
+    width, height = img.size
+    pixels = img.load()
+    hex_list = []
+    
+    for y in range(height):
+        byte = 0
+        bit = 7
+        for x in range(width):
+            if pixels[x, y] == 0:
+                byte |= (1 << bit)
+            bit -= 1
+            if bit < 0:
+                hex_list.append(f'{byte:02X}')
+                byte = 0
+                bit = 7
+        if bit != 7:
+            hex_list.append(f'{byte:02X}')
+    
+    return ''.join(hex_list)
+
 def get_label_zpl_bytes(order_id, customer, box_index, box_total):
+    """
+    Tạo lệnh ZPL2 với ảnh được chia nhỏ thành nhiều phần
+    Mỗi phần < 30KB để không tràn buffer
+    """
     img = create_zpl_raster(order_id, customer, box_index, box_total,
-                            width_mm=115, height_mm=72, dpi=50)
-
-    width_bytes, height_dots, total_bytes, hex_data = pil_to_zpl_gf_raw(img)
-
-    cmd = ""
-    cmd += "^XA\n"
-    cmd += f"^PW{width_bytes*8}\n"
-    cmd += f"^LL{height_dots}\n"
-    cmd += "^FO0,0\n"
-    cmd += f"^GFA,{total_bytes},{total_bytes},{width_bytes},{hex_data}\n"
-    cmd += "^FS\n"
+                            width_mm=115, height_mm=72, dpi=80)
+    
+    chunks = pil_to_zpl_gf_chunked(img, max_bytes_per_chunk=30*1024)
+    
+    if len(chunks) == 1:
+        # Ảnh nhỏ, in 1 lần
+        width_bytes, height_dots, total_bytes, hex_data = pil_to_zpl_gf_raw(img)
+        cmd = "^XA\n"
+        cmd += f"^PW{img.size[0]}\n"
+        cmd += f"^LL{img.size[1]}\n"
+        cmd += "^FO0,0\n"
+        cmd += f"^GFA,{total_bytes},{total_bytes},{width_bytes},{hex_data}\n"
+        cmd += "^FS\n"
+        cmd += "^PQ1\n"
+        cmd += "^XZ\n"
+        return cmd.encode('utf-8')
+    
+    cmd = "^XA\n"
+    cmd += f"^PW{img.size[0]}\n"
+    cmd += f"^LL{img.size[1]}\n"
+    
+    for chunk in chunks:
+        cmd += f"^FO0,{chunk['start_y']}\n"
+        cmd += f"^GFA,{chunk['total_bytes']},{chunk['total_bytes']},{chunk['width_bytes']},{chunk['hex_data']}\n"
+        cmd += "^FS\n"
+    
     cmd += "^PQ1\n"
     cmd += "^XZ\n"
-
+    
     return cmd.encode('utf-8')
 
 # ---------- MÀN HÌNH PHỤ ----------
@@ -704,7 +785,7 @@ class HomeScreen(Screen):
                     status_label.text = f"Lỗi: {err}"
                     status_label.color = COLOR_ERROR
                     return
-                time.sleep(1)
+                time.sleep(0.5)
             add_history_entry(oid, cust, box_n)
             status_label.text = f"In thành công {box_n} nhãn"
             status_label.color = COLOR_SUCCESS
