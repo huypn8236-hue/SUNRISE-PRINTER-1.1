@@ -231,11 +231,11 @@ def find_system_font():
 
     return None
 
-# ---------- TẠO ẢNH PREVIEW (110x70mm) ----------
+# ---------- TẠO ẢNH PREVIEW (115x72mm) ----------
 def create_label_image(order_id, customer, box_index, box_total,
-                       width_mm=110, height_mm=70, dpi=203):
+                       width_mm=115, height_mm=72, dpi=203):
     """
-    Tạo ảnh preview với kích thước 110x70mm
+    Tạo ảnh preview với kích thước 115x72mm
     font size: 65 (order), 50 (customer), 52 (box)
     """
     if not HAS_PIL:
@@ -269,15 +269,12 @@ def create_label_image(order_id, customer, box_index, box_total,
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
-    # Dòng 1: Mã đơn (trên cùng, căn trái)
     y1 = padding_y + section_height * 0.1
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
-    # Dòng 2: Tên khách (giữa, căn trái)
     y2 = padding_y + section_height + section_height * 0.1
     draw.text((padding_x, y2), customer, fill='black', font=font_name)
 
-    # Dòng 3: Box (dưới cùng, căn phải)
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0, 0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
@@ -289,11 +286,13 @@ def create_label_image(order_id, customer, box_index, box_total,
 
 # ---------- TẠO ẢNH RASTER CHO ZPL2 ----------
 def create_zpl_raster(order_id, customer, box_index, box_total,
-                      width_mm=110, height_mm=70, dpi=150):
+                      width_mm=115, height_mm=72, dpi=80):
     """
     Tạo ảnh raster cho ZPL2:
+    - Kích thước 115x72mm, DPI 80 (tăng tốc in)
     - Xoay 90° để form ngang
     - Chuyển sang mode '1' (đen trắng)
+    - Font x1.5 lần so với preview
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -308,10 +307,10 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
 
     if font_path:
         try:
-            # Font to hơn để bù DPI thấp
-            font_order = ImageFont.truetype(font_path, size=85)
-            font_name = ImageFont.truetype(font_path, size=68)
-            font_box = ImageFont.truetype(font_path, size=70)
+            # Font x1.5 lần so với preview (65*1.5=97, 50*1.5=75, 52*1.5=78)
+            font_order = ImageFont.truetype(font_path, size=97)
+            font_name = ImageFont.truetype(font_path, size=75)
+            font_box = ImageFont.truetype(font_path, size=78)
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -321,23 +320,25 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
         font_name = ImageFont.load_default()
         font_box = ImageFont.load_default()
 
-    padding_x = int(width_px * 0.05)
-    padding_y = int(height_px * 0.05)
+    # Giảm padding để chữ rải đều khắp giấy
+    padding_x = int(width_px * 0.03)
+    padding_y = int(height_px * 0.03)
 
     usable_height = height_px - padding_y * 2
     section_height = usable_height / 3
 
-    y1 = padding_y + section_height * 0.1
+    # === RẢI ĐỀU 3 DÒNG ===
+    y1 = padding_y + section_height * 0.05
     draw.text((padding_x, y1), order_id, fill='black', font=font_order)
 
-    y2 = padding_y + section_height + section_height * 0.1
+    y2 = padding_y + section_height + section_height * 0.05
     draw.text((padding_x, y2), customer, fill='black', font=font_name)
 
     box_text = f"Box: #{box_index} / {box_total}"
     bbox = draw.textbbox((0, 0), box_text, font=font_box)
     text_width = bbox[2] - bbox[0]
     x_pos = width_px - text_width - padding_x
-    y3 = padding_y + section_height * 2 + section_height * 0.1
+    y3 = padding_y + section_height * 2 + section_height * 0.05
     draw.text((x_pos, y3), box_text, fill='black', font=font_box)
 
     # XOAY 90 ĐỘ (form ngang)
@@ -383,26 +384,23 @@ def pil_to_zpl_gf_raw(img):
 
 def get_label_zpl_bytes(order_id, customer, box_index, box_total):
     """
-    Tạo lệnh ZPL2 để in ảnh raster form ngang 110x70mm (DPI 150)
+    Tạo lệnh ZPL2 để in ảnh raster form ngang 115x72mm (DPI 80)
     Sử dụng ^GFA (không nén) để máy in dễ xử lý
     """
-    # 1. Tạo ảnh đã xoay
     img = create_zpl_raster(order_id, customer, box_index, box_total,
-                            width_mm=110, height_mm=70, dpi=150)
+                            width_mm=115, height_mm=72, dpi=80)
 
-    # 2. Chuyển sang dữ liệu hex
     width_bytes, height_dots, total_bytes, hex_data = pil_to_zpl_gf_raw(img)
 
-    # 3. Tạo lệnh ZPL
     cmd = ""
-    cmd += "^XA\n"                       # Bắt đầu label
-    cmd += f"^PW{width_bytes*8}\n"      # Chiều rộng label (dots)
-    cmd += f"^LL{height_dots}\n"        # Chiều dài label (dots)
-    cmd += "^FO0,0\n"                   # Đặt vị trí ảnh tại (0,0)
+    cmd += "^XA\n"
+    cmd += f"^PW{width_bytes*8}\n"
+    cmd += f"^LL{height_dots}\n"
+    cmd += "^FO0,0\n"
     cmd += f"^GFA,{total_bytes},{total_bytes},{width_bytes},{hex_data}\n"
-    cmd += "^FS\n"                       # Kết thúc field
-    cmd += "^PQ1\n"                      # In 1 bản
-    cmd += "^XZ\n"                       # Kết thúc label
+    cmd += "^FS\n"
+    cmd += "^PQ1\n"
+    cmd += "^XZ\n"
 
     return cmd.encode('utf-8')
 
@@ -508,7 +506,6 @@ class HomeScreen(Screen):
         content = BoxLayout(orientation='vertical', size_hint_y=None, padding=dp(12), spacing=dp(8))
         content.bind(minimum_height=content.setter('height'))
 
-        # Ô nhập liệu
         self.so_input = TextInput(hint_text="SO Num", font_size=sp(18), multiline=False,
                                   size_hint_y=None, height=dp(44),
                                   background_color=(0.95,0.95,0.95,1),
@@ -527,21 +524,18 @@ class HomeScreen(Screen):
                                    foreground_color=COLOR_BLACK, padding=[dp(10), dp(6)])
         content.add_widget(self.box_input)
 
-        # Nút IN TEM
         btn_print = Button(text="IN TEM", font_size=sp(20), bold=True,
                            size_hint_y=None, height=dp(50),
                            background_color=COLOR_SUCCESS, color=COLOR_WHITE)
         btn_print.bind(on_release=self.on_print)
         content.add_widget(btn_print)
 
-        # Nút TEST IN
         btn_test = Button(text="TEST IN", font_size=sp(16), bold=True,
                           size_hint_y=None, height=dp(40),
                           background_color=COLOR_WARNING, color=COLOR_WHITE)
         btn_test.bind(on_release=self.test_print)
         content.add_widget(btn_test)
 
-        # Khu vực Preview
         preview_box = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(500), spacing=dp(4))
         preview_label = Label(text="Preview tem", font_size=sp(16), color=COLOR_GRAY,
                               size_hint_y=None, height=dp(24))
@@ -610,7 +604,6 @@ class HomeScreen(Screen):
             self.manager.current = screen_name
 
     def test_print(self, *args):
-        """Test in ZPL2 đơn giản"""
         if not is_android():
             Popup(title="Thông báo", content=Label(text="Chỉ hoạt động trên Android"),
                   size_hint=(.8,.4)).open()
@@ -624,7 +617,6 @@ class HomeScreen(Screen):
 
         mac = devices[0][1]
 
-        # Lệnh ZPL đơn giản
         test_data = b'^XA\n^FO50,50^ADN,36,20^FDTest Print^FS\n^XZ\n'
 
         popup_content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
@@ -766,7 +758,6 @@ class HomeScreen(Screen):
         Popup(title="Mô phỏng", content=Label(text=f"Đã lưu {box_n} ảnh tại {folder}"),
               size_hint=(.8,.4)).open()
 
-    # ---------- Preview ----------
     def update_preview(self):
         if not self.label_images:
             self.preview_image.texture = None
