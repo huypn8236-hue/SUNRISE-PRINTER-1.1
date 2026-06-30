@@ -237,7 +237,7 @@ def create_label_image(order_id, customer, box_index, box_total,
                        width_mm=115, height_mm=70, dpi=203):
     """
     Tạo ảnh preview với kích thước 115x70mm
-    font size: 65 (order), 50 (customer), 52 (box)
+    font size: 70 (order), 65 (customer), 67 (box)
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -252,9 +252,9 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     if font_path:
         try:
-            font_order = ImageFont.truetype(font_path, size=65)
-            font_name = ImageFont.truetype(font_path, size=50)
-            font_box = ImageFont.truetype(font_path, size=52)
+            font_order = ImageFont.truetype(font_path, size=70)
+            font_name = ImageFont.truetype(font_path, size=65)
+            font_box = ImageFont.truetype(font_path, size=67)
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -285,16 +285,15 @@ def create_label_image(order_id, customer, box_index, box_total,
 
     return img
 
-# ---------- TẠO ẢNH RASTER CHO ZPL2 (DPI 203) ----------
+# ---------- TẠO ẢNH RASTER CHO ZPL2 (DPI 203, XOAY TRONG PILLOW) ----------
 def create_zpl_raster(order_id, customer, box_index, box_total,
                       width_mm=115, height_mm=70, dpi=203):
     """
     Tạo ảnh raster cho ZPL2:
     - DPI 203
-    - Kích thước 115x70mm
-    - Font cố định: 95-70-72
+    - Font: 105-80-85
     - Dòng 1+2: Căn trái, Dòng 3: Căn phải
-    - KHÔNG XOAY ẢNH (để ZPL xoay)
+    - XOAY 90° TRONG PILLOW để form ngang (không dùng ^FWR)
     """
     if not HAS_PIL:
         raise ImportError("Pillow chưa được cài đặt.")
@@ -309,9 +308,9 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
 
     if font_path:
         try:
-            font_order = ImageFont.truetype(font_path, size=95)
-            font_name = ImageFont.truetype(font_path, size=70)
-            font_box = ImageFont.truetype(font_path, size=72)
+            font_order = ImageFont.truetype(font_path, size=105)
+            font_name = ImageFont.truetype(font_path, size=80)
+            font_box = ImageFont.truetype(font_path, size=85)
         except:
             font_order = ImageFont.load_default()
             font_name = ImageFont.load_default()
@@ -342,8 +341,10 @@ def create_zpl_raster(order_id, customer, box_index, box_total,
     y3 = padding_y + section_height * 2 + section_height * 0.05
     draw.text((x_pos, y3), box_text, fill='black', font=font_box)
 
-    # KHÔNG XOAY ẢNH
-    img_bw = img.convert('1')
+    # === XOAY 90° TRONG PILLOW ===
+    img_rotated = img.rotate(90, expand=True)
+    img_bw = img_rotated.convert('1')
+    
     return img_bw
 
 def pil_to_zpl_gf_raw(img):
@@ -443,23 +444,22 @@ def pil_to_zpl_gf_chunked(img, max_bytes_per_chunk=30*1024):
 
 def get_label_zpl_bytes(order_id, customer, box_index, box_total):
     """
-    Tạo lệnh ZPL2 với ảnh được chia nhỏ thành 3 chunk
-    Dùng ^FWR để xoay label form ngang
+    Tạo lệnh ZPL2 - ẢNH ĐÃ XOAY TRONG PILLOW
+    KHÔNG dùng ^FWR để tránh khoảng trống
     """
     img = create_zpl_raster(order_id, customer, box_index, box_total,
                             width_mm=115, height_mm=70, dpi=203)
 
     chunks = pil_to_zpl_gf_chunked(img, max_bytes_per_chunk=30*1024)
 
-    # Kích thước gốc (dọc)
-    width_dots = img.size[0]
-    height_dots = img.size[1]
+    # Lấy kích thước ảnh ĐÃ XOAY
+    width_px, height_px = img.size
 
     cmd = ""
     cmd += "^XA\n"
-    cmd += "^FWB\n"                       # Xoay label 90° (form ngang)
-    cmd += f"^PW{height_dots}\n"          # Chiều rộng = height_dots
-    cmd += f"^LL{width_dots}\n"           # Chiều dài = width_dots
+    cmd += "^FWN\n"                       # KHÔNG XOAY (ảnh đã xoay sẵn)
+    cmd += f"^PW{width_px}\n"
+    cmd += f"^LL{height_px}\n"
     
     for chunk in chunks:
         cmd += f"^FO0,{chunk['start_y']}\n"
